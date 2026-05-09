@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { motion } from "framer-motion";
 import {
   Wallet,
@@ -811,6 +811,7 @@ function normalizeIncome(item) {
     notes: item.notes || item.comment || "",
     status,
     appliedAt: appliedAtFor(status, date, item.appliedAt),
+    createdAt: item.createdAt || today(),
   };
 }
 
@@ -828,6 +829,7 @@ function normalizeExpense(item) {
     notes: item.notes || item.comment || "",
     status,
     appliedAt: appliedAtFor(status, date, item.appliedAt),
+    createdAt: item.createdAt || today(),
   };
 }
 
@@ -1019,6 +1021,7 @@ function Shell({ data, update, tab, setTab, children }) {
     ["Settings", Settings],
   ];
   const [isDark, setIsDark] = useState(false);
+  const swipeRef = useRef(null);
 
   usePaymentReminders(data);
 
@@ -1046,10 +1049,35 @@ function Shell({ data, update, tab, setTab, children }) {
     });
   };
 
+  const switchTabBySwipe = (direction) => {
+    const index = tabs.findIndex(([name]) => name === tab);
+    const nextIndex = Math.min(tabs.length - 1, Math.max(0, index + direction));
+    if (nextIndex !== index) setTab(tabs[nextIndex][0]);
+  };
+
+  const startSwipe = (event) => {
+    if (event.target.closest("input, textarea, select, button, label")) return;
+    const touch = event.touches[0];
+    swipeRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const endSwipe = (event) => {
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!start) return;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) < 72 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) return;
+    switchTabBySwipe(deltaX < 0 ? 1 : -1);
+  };
+
   return (
     <div
       className="min-h-screen overflow-x-hidden bg-[#f7f8fb] text-zinc-950 dark:bg-[#05050b] dark:text-zinc-50"
       style={getPaletteVars(data.settings.palette, isDark)}
+      onTouchStart={startSwipe}
+      onTouchEnd={endSwipe}
     >
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/10 bg-[#050512] px-3 py-5 text-white shadow-[20px_0_70px_rgba(0,0,0,0.35)] lg:flex">
         <div className="mb-8 flex items-center gap-2 px-2">
@@ -1151,8 +1179,9 @@ function Shell({ data, update, tab, setTab, children }) {
   );
 }
 
-function Dashboard({ data, update }) {
+function Dashboard({ data, update, syncUser }) {
   const [selectedCycleId, setSelectedCycleId] = useState("current");
+  const [aiOpen, setAiOpen] = useState(false);
   const range = useMemo(() => getFinancialRange(data.settings), [data.settings]);
   const currentTotals = useMemo(() => calculateCycleTotals(data, range), [data, range]);
   const selectedSnapshot = data.cycleSnapshots.find((item) => item.id === selectedCycleId);
@@ -1246,6 +1275,15 @@ function Dashboard({ data, update }) {
           <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Here's your financial overview</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAiOpen((open) => !open)}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-violet-200 bg-violet-50 text-violet-700 shadow-sm transition hover:border-violet-400 hover:bg-violet-100 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-200"
+            aria-label="Add with AI"
+            title="Add with AI"
+          >
+            <Sparkles size={18} />
+          </button>
           <select
             value={selectedCycleId}
             onChange={(event) => setSelectedCycleId(event.target.value)}
@@ -1264,6 +1302,12 @@ function Dashboard({ data, update }) {
           </select>
         </div>
       </section>
+
+      {aiOpen && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
+          <AiAddPanel data={data} update={update} syncUser={syncUser} />
+        </motion.div>
+      )}
 
       <section className="grid gap-4 md:grid-cols-2">
         <div className="flex min-h-[230px] flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
@@ -1579,9 +1623,449 @@ function aiConfidence(parsed) {
   return Number(parsed?.confidence || 0);
 }
 
+function aiUsageDocId() {
+  return today();
+}
+
+function normalizeAiParseResponse(result) {
+  const transactions = Array.isArray(result?.transactions) ? result.transactions : [result].filter(Boolean);
+  return {
+    transactions: transactions.slice(0, 5),
+    overallConfidence: Number(result?.overallConfidence ?? transactions[0]?.confidence ?? 0),
+    warnings: Array.isArray(result?.warnings) ? result.warnings.filter(Boolean) : [],
+    usage: result?.usage || null,
+  };
+}
+
+function aiReviewItem(parsed) {
+  return {
+    id: uid(),
+    selected: true,
+    parsed: {
+      transactionType: normalizeAiType(parsed) || "expense",
+      title: parsed?.title || "",
+      amount: parsed?.amount || "",
+      date: parsed?.date || today(),
+      category: parsed?.category || "",
+      accountName: parsed?.accountName || "",
+      isRecurring: Boolean(parsed?.isRecurring),
+      frequency: parsed?.frequency || "none",
+      notes: parsed?.notes || "",
+      confidence: Number(parsed?.confidence || 0),
+      warnings: aiWarnings(parsed),
+      lockedLedger: Boolean(parsed?.lockedLedger),
+      ledgerKind: parsed?.ledgerKind || "cash",
+    },
+  };
+}
+
+function hasRequiredAiFields(parsed, data) {
+  const transactionType = resolveAiTransactionType(parsed, data);
+  if (!parsed?.amount || !parsed?.date || !parsed?.title) return false;
+  if ((transactionType === "expense" || transactionType === "income") && !parsed?.category) return false;
+  if (transactionType.startsWith("saving")) return Boolean(findAccountMatch(data.savingGoals, parsed.accountName || parsed.title || parsed.category));
+  if (transactionType.startsWith("investment")) return Boolean(findAccountMatch(data.investments, parsed.accountName || parsed.title || parsed.category));
+  return true;
+}
+
+function normalizeAccountText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findAccountMatch(items, accountName) {
+  const normalized = normalizeAccountText(accountName);
+  if (!normalized) return null;
+  return items.find((item) => {
+    const name = normalizeAccountText(item.name);
+    return name && (name === normalized || normalized.includes(name) || name.includes(normalized));
+  }) || null;
+}
+
 function accountIdByName(items, accountName) {
-  const normalized = String(accountName || "").trim().toLowerCase();
-  return items.find((item) => item.name?.toLowerCase() === normalized)?.id || items[0]?.id || "";
+  return findAccountMatch(items, accountName)?.id || items[0]?.id || "";
+}
+
+function resolveAiTransactionType(parsed, data) {
+  const transactionType = normalizeAiType(parsed) || "expense";
+  if (transactionType.startsWith("saving") || transactionType.startsWith("investment")) return transactionType;
+
+  const text = [parsed?.accountName, parsed?.title, parsed?.category, parsed?.notes].join(" ");
+  const isWithdrawal = /\b(withdraw|withdrew|take out|transfer out|remove)\b/i.test(text);
+  if (findAccountMatch(data.savingGoals, text)) return isWithdrawal ? "saving_withdrawal" : "saving_deposit";
+  if (findAccountMatch(data.investments, text)) return isWithdrawal ? "investment_withdrawal" : "investment_contribution";
+  return transactionType;
+}
+
+function resolveAiLedgerLock(parsed, data) {
+  const text = [parsed?.accountName, parsed?.title, parsed?.category, parsed?.notes].join(" ");
+  const transactionType = resolveAiTransactionType(parsed, data);
+  const savingGoal = findAccountMatch(data.savingGoals, text);
+  const investment = findAccountMatch(data.investments, text);
+
+  if (investment && transactionType.startsWith("investment")) {
+    return {
+      locked: true,
+      accountName: investment.name,
+      transactionType,
+      kind: "investment",
+    };
+  }
+
+  if (savingGoal && transactionType.startsWith("saving")) {
+    return {
+      locked: true,
+      accountName: savingGoal.name,
+      transactionType,
+      kind: "saving",
+    };
+  }
+
+  return {
+    locked: false,
+    accountName: parsed?.accountName || parsed?.category || parsed?.title || "",
+    transactionType,
+    kind: transactionType.startsWith("investment") ? "investment" : transactionType.startsWith("saving") ? "saving" : "cash",
+  };
+}
+
+function transactionSortKey(item) {
+  return `${item.date || ""}T${String(item.createdAt || item.appliedAt || "00:00:00").slice(11, 19)}`;
+}
+
+function AiAddPanel({ data, update, syncUser }) {
+  const [aiText, setAiText] = useState("");
+  const [aiStatus, setAiStatus] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiReviewItems, setAiReviewItems] = useState([]);
+  const [aiResponseWarnings, setAiResponseWarnings] = useState([]);
+  const [aiUsage, setAiUsage] = useState({ count: 0, remaining: 30, limit: 30, bypass: false });
+  const [aiAutoConfirm, setAiAutoConfirm] = useState(() => localStorage.getItem(AI_AUTO_CONFIRM_KEY) === "true");
+
+  useEffect(() => {
+    localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
+  }, [aiAutoConfirm]);
+
+  useEffect(() => {
+    if (!syncUser?.uid) {
+      setAiUsage({ count: 0, remaining: 30, limit: 30, bypass: false });
+      return undefined;
+    }
+
+    return onSnapshot(doc(db, "users", syncUser.uid, "aiUsage", aiUsageDocId()), (snapshot) => {
+      const count = Number(snapshot.data()?.count || 0);
+      setAiUsage({
+        count,
+        remaining: Math.max(0, 30 - count),
+        limit: 30,
+        bypass: false,
+      });
+    });
+  }, [syncUser?.uid]);
+
+  const bumpUsage = (usage) => {
+    if (usage) {
+      setAiUsage(usage);
+      return;
+    }
+    setAiUsage((current) => {
+      if (current.bypass) return current;
+      const count = Math.min(current.limit, Number(current.count || 0) + 1);
+      return { ...current, count, remaining: Math.max(0, current.limit - count) };
+    });
+  };
+
+  const makeReviewItem = (transaction) => {
+    const lock = resolveAiLedgerLock(transaction, data);
+    return aiReviewItem({
+      ...transaction,
+      transactionType: lock.transactionType,
+      accountName: lock.accountName,
+      lockedLedger: lock.locked,
+      ledgerKind: lock.kind,
+    });
+  };
+
+  const saveParsedResult = (parsed) => {
+    const transactionType = resolveAiTransactionType(parsed, data);
+    const amount = parseAmount(parsed.amount);
+    const date = parsed.date || today();
+    const status = getTransactionStatus(date);
+    const createdAt = new Date().toISOString();
+    update((draft) => {
+      if (parsed.isRecurring && (transactionType === "income" || transactionType === "expense")) {
+        const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
+        draft.recurring.push({
+          id: uid(),
+          kind: transactionType,
+          title: parsed.title || (transactionType === "income" ? parsed.category || "Income" : category),
+          amount,
+          category,
+          type: parsed.category || "Salary",
+          startDate: date,
+          frequency: normalizeAiFrequency(parsed),
+          customDays: 30,
+          notes: parsed.notes || "",
+          active: true,
+          createdAt,
+        });
+        return draft;
+      }
+      if (transactionType === "income") {
+        draft.incomes.push({ id: uid(), name: parsed.title || parsed.category || "Income", amount, date, type: parsed.category || "Salary", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+      }
+      if (transactionType === "expense") {
+        const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
+        draft.expenses.push({ id: uid(), title: parsed.title || category, amount, date, category, paymentMethod: "Card", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+      }
+      if (transactionType === "saving_deposit" || transactionType === "saving_withdrawal") {
+        const accountText = [parsed.accountName, parsed.title, parsed.category, parsed.notes].join(" ");
+        const accountName = parsed.accountName || parsed.title || "Saving goal";
+        let goal = findAccountMatch(draft.savingGoals, accountText);
+        if (!goal) {
+          goal = {
+            id: uid(),
+            name: accountName,
+            goalAmount: 0,
+            goalDate: formatDate(new Date(new Date().getFullYear() + 1, new Date().getMonth(), new Date().getDate())),
+            openingBalance: 0,
+            currentBalance: 0,
+            notes: "Created from AI",
+            createdAt,
+          };
+          draft.savingGoals.push(goal);
+        }
+        const type = transactionType === "saving_withdrawal" ? "withdrawal" : "deposit";
+        draft.savingTransactions.push({ id: uid(), savingGoalId: goal.id, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+        if (goal && status === "applied") goal.currentBalance = Math.max(0, Number(goal.currentBalance || 0) + movementDelta(type, amount));
+      }
+      if (transactionType === "investment_contribution" || transactionType === "investment_withdrawal") {
+        const accountText = [parsed.accountName, parsed.title, parsed.category, parsed.notes].join(" ");
+        const accountName = parsed.accountName || parsed.title || "Investment";
+        let investment = findAccountMatch(draft.investments, accountText);
+        if (!investment) {
+          investment = {
+            id: uid(),
+            name: accountName,
+            type: parsed.category || "Other",
+            currentBalance: 0,
+            monthlyContribution: 0,
+            annualReturn: 0,
+            notes: "Created from AI",
+            createdAt,
+          };
+          draft.investments.push(investment);
+        }
+        const type = transactionType === "investment_withdrawal" ? "withdrawal" : "contribution";
+        draft.investmentTransactions.push({ id: uid(), investmentId: investment.id, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), affectsCash: true, createdAt });
+        if (investment && status === "applied") investment.currentBalance = Math.max(0, Number(investment.currentBalance || 0) + contributionDelta(type, amount));
+      }
+      return draft;
+    });
+  };
+
+  const parseWithAi = async () => {
+    if (!syncUser) {
+      setAiStatus("Please sign in to use AI transaction parsing.");
+      return;
+    }
+    const trimmed = aiText.trim();
+    if (!trimmed) {
+      setAiStatus("Type a transaction first.");
+      return;
+    }
+    if (trimmed.length > AI_PROMPT_LIMIT) {
+      setAiStatus(`Keep the AI prompt under ${AI_PROMPT_LIMIT} characters.`);
+      return;
+    }
+
+    setAiBusy(true);
+    setAiStatus("Adding with AI...");
+    setAiReviewItems([]);
+    setAiResponseWarnings([]);
+    try {
+      const response = normalizeAiParseResponse(await parseNaturalTransaction({
+        text: trimmed,
+        currency: data.settings.currency,
+        categories: data.categories,
+        savingGoals: data.savingGoals.map((item) => item.name),
+        investments: data.investments.map((item) => item.name),
+      }));
+      const reviewItems = response.transactions.map(makeReviewItem);
+      const safeItems = reviewItems.filter((item) =>
+        aiConfidence(item.parsed) >= 0.85 &&
+        !aiWarnings(item.parsed).length &&
+        hasRequiredAiFields(item.parsed, data),
+      );
+      const needsReview = reviewItems.filter((item) => !safeItems.includes(item));
+
+      bumpUsage(response.usage);
+      setAiText("");
+      setAiResponseWarnings(response.warnings);
+
+      if (aiAutoConfirm && safeItems.length) {
+        safeItems.forEach((item) => saveParsedResult(item.parsed));
+      }
+
+      setAiReviewItems(aiAutoConfirm ? needsReview : reviewItems);
+      if (aiAutoConfirm) {
+        setAiStatus(needsReview.length ? `${safeItems.length} transactions saved, ${needsReview.length} needs review.` : `${safeItems.length} transaction${safeItems.length === 1 ? "" : "s"} saved.`);
+      } else {
+        setAiStatus(reviewItems.length > 1 ? "Review the AI results before saving." : "Review this AI result before saving.");
+      }
+    } catch (error) {
+      console.error(error);
+      setAiStatus(error?.message || "AI parsing failed. Please reword it and try again.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const updateAiReviewItem = (id, patch) => {
+    setAiReviewItems((items) =>
+      items.map((item) =>
+        item.id === id ? { ...item, parsed: { ...item.parsed, ...patch } } : item,
+      ),
+    );
+  };
+
+  const confirmAiItems = (items) => {
+    if (!items.length) {
+      setAiStatus("Select at least one AI result to save.");
+      return;
+    }
+
+    items.forEach((item) => saveParsedResult(item.parsed));
+    setAiReviewItems((current) => current.filter((item) => !items.some((saved) => saved.id === item.id)));
+    setAiStatus(`${items.length} transaction${items.length === 1 ? "" : "s"} saved.`);
+  };
+
+  const confirmCurrentAiItem = () => {
+    const current = aiReviewItems[0];
+    if (!current) return;
+    saveParsedResult(current.parsed);
+    setAiReviewItems((items) => items.slice(1));
+    setAiStatus(aiReviewItems.length > 1 ? "Transaction saved. Review the next one." : "Transaction saved.");
+  };
+
+  const removeCurrentAiItem = () => {
+    setAiReviewItems((items) => items.slice(1));
+    setAiStatus(aiReviewItems.length > 1 ? "Skipped. Review the next one." : "Skipped.");
+  };
+
+  const currentReviewItem = aiReviewItems[0];
+
+  return (
+    <Panel title="Add with AI">
+      <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center">
+        <span>{syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}</span>
+        <span className="rounded-md bg-white px-2 py-1 text-xs font-black text-[var(--accent-strong)] dark:bg-zinc-950">
+          {aiUsage.bypass ? "Developer bypass" : `${aiUsage.count} used / ${aiUsage.remaining} left`}
+        </span>
+      </div>
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Describe transactions</span>
+        <textarea
+          value={aiText}
+          maxLength={AI_PROMPT_LIMIT}
+          onChange={(event) => setAiText(event.target.value)}
+          rows={3}
+          placeholder={"Example: Spent R450 on fuel yesterday and R200 on food today"}
+          className="w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+        />
+        <span className={cx("mt-1.5 block text-right text-xs font-black", aiText.length >= AI_PROMPT_LIMIT ? "text-amber-600 dark:text-amber-300" : "text-zinc-500 dark:text-zinc-400")}>
+          {aiText.length} / {AI_PROMPT_LIMIT}
+        </span>
+      </label>
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+        <span>
+          <span className="block text-sm font-black text-zinc-950 dark:text-white">Auto-confirm AI result</span>
+          <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400">Only high-confidence results with no warnings save automatically.</span>
+        </span>
+        <button
+          type="button"
+          aria-pressed={aiAutoConfirm}
+          className={cx("h-7 w-12 rounded-full p-1 transition", aiAutoConfirm ? "bg-[var(--accent-strong)]" : "bg-zinc-200 dark:bg-zinc-800")}
+          onClick={() => {
+            if (!aiAutoConfirm && !window.confirm("Auto-confirm will save high-confidence AI transactions without manual review. Continue?")) return;
+            setAiAutoConfirm(!aiAutoConfirm);
+          }}
+        >
+          <span className={cx("block h-5 w-5 rounded-full bg-white shadow-sm transition", aiAutoConfirm && "translate-x-5")} />
+        </button>
+      </label>
+      <Button onClick={parseWithAi} disabled={aiBusy || !syncUser || !aiText.trim() || aiText.trim().length > AI_PROMPT_LIMIT}>
+        <Sparkles size={16} /> {aiBusy ? "Adding..." : "Add with AI"}
+      </Button>
+      {aiStatus && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{aiStatus}</p>}
+      {Boolean(aiResponseWarnings.length) && <p className="text-sm font-bold text-amber-700 dark:text-amber-300">{aiResponseWarnings.join(" ")}</p>}
+      {Boolean(currentReviewItem) && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs font-black text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+            <span>Review {1} of {aiReviewItems.length}</span>
+            <span>{aiReviewItems.length > 1 ? `${aiReviewItems.length - 1} waiting` : "Last item"}</span>
+          </div>
+          {(() => {
+            const item = currentReviewItem;
+            const parsed = currentReviewItem.parsed;
+            const confidence = aiConfidence(parsed);
+            const warnings = aiWarnings(parsed);
+            return (
+              <div className={cx("rounded-lg border bg-white p-2.5 text-xs font-semibold dark:bg-zinc-950", confidence < 0.75 || warnings.length ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
+                <div className="mb-2.5 flex items-start justify-between gap-2">
+                  <div className="min-w-0 text-sm font-black text-zinc-900 dark:text-white">
+                    <span className="truncate">{parsed.title || "AI item"}</span>
+                    <p className="mt-0.5 text-[10px] font-black uppercase text-zinc-400">{parsed.transactionType.replaceAll("_", " ")}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 font-black text-[var(--accent-strong)]">
+                      {Math.round(confidence * 100)}%
+                    </span>
+                    <TinyIconButton label="Skip AI result" onClick={removeCurrentAiItem}>
+                      <Trash2 size={14} />
+                    </TinyIconButton>
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Select
+                    label="Type"
+                    value={parsed.transactionType}
+                    options={parsed.lockedLedger ? [parsed.transactionType] : ["income", "expense", "saving_deposit", "saving_withdrawal", "investment_contribution", "investment_withdrawal"]}
+                    onChange={(value) => updateAiReviewItem(item.id, { transactionType: value })}
+                    disabled={parsed.lockedLedger}
+                  />
+                  <Input label="Title" value={parsed.title} onChange={(value) => updateAiReviewItem(item.id, { title: value })} />
+                  <AmountInput label="Amount" value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />
+                  <DateInput label="Date" value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
+                  <Input
+                    label={parsed.ledgerKind === "investment" ? "Investment account" : parsed.ledgerKind === "saving" ? "Saving goal" : "Category / account"}
+                    value={parsed.accountName || parsed.category}
+                    onChange={(value) => updateAiReviewItem(item.id, { category: value, accountName: value })}
+                    disabled={parsed.lockedLedger}
+                  />
+                  <Select label="Frequency" value={parsed.frequency || "none"} options={["none", "weekly", "monthly", "yearly"]} onChange={(value) => updateAiReviewItem(item.id, { frequency: value, isRecurring: value !== "none" })} />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded bg-zinc-100 px-2 py-1 font-black uppercase text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{parsed.transactionType.replaceAll("_", " ")}</span>
+                  <span className="rounded bg-zinc-100 px-2 py-1 font-black text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{parsed.isRecurring ? "Recurring" : "Once-off"}</span>
+                  {warnings.map((warning) => (
+                    <span key={warning} className="rounded bg-amber-100 px-2 py-1 font-black text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">{warning}</span>
+                  ))}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <Button onClick={confirmCurrentAiItem}>
+                    <CheckCircle2 size={16} /> Add This
+                  </Button>
+                  <Button variant="secondary" onClick={removeCurrentAiItem}>
+                    Skip
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </Panel>
+  );
 }
 
 function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
@@ -1592,7 +2076,9 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
   const [aiStatus, setAiStatus] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState(null);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiReviewItems, setAiReviewItems] = useState([]);
+  const [aiResponseWarnings, setAiResponseWarnings] = useState([]);
+  const [aiUsage, setAiUsage] = useState({ count: 0, remaining: 30, limit: 30, bypass: false });
   const [aiAutoConfirm, setAiAutoConfirm] = useState(() => localStorage.getItem(AI_AUTO_CONFIRM_KEY) === "true");
   const [aiReviewFields, setAiReviewFields] = useState([]);
   const [showTransactionForm, setShowTransactionForm] = useState(false);
@@ -1631,11 +2117,27 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
     localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
   }, [aiAutoConfirm]);
 
+  useEffect(() => {
+    if (!syncUser?.uid) {
+      setAiUsage({ count: 0, remaining: 30, limit: 30, bypass: false });
+      return undefined;
+    }
+
+    return onSnapshot(doc(db, "users", syncUser.uid, "aiUsage", aiUsageDocId()), (snapshot) => {
+      const count = Number(snapshot.data()?.count || 0);
+      setAiUsage({
+        count,
+        remaining: Math.max(0, 30 - count),
+        limit: 30,
+        bypass: false,
+      });
+    });
+  }, [syncUser?.uid]);
+
   const items = useMemo(
     () => {
       const savingNames = Object.fromEntries(data.savingGoals.map((item) => [item.id, item.name]));
       const investmentNames = Object.fromEntries(data.investments.map((item) => [item.id, item.name]));
-      const groupOrder = { Income: 0, Expenses: 1, Savings: 2, Investments: 3 };
       return [
         ...data.incomes.filter(isApplied).map((item) => ({ ...item, group: "Income", title: item.name || item.type, subtitle: item.recurringId ? `Recurring - ${item.type}` : item.type, sign: 1 })),
         ...data.expenses.filter(isApplied).map((item) => ({ ...item, group: "Expenses", title: item.title || item.category, subtitle: item.recurringId ? `Recurring - ${item.category}` : item.category, sign: -1 })),
@@ -1658,7 +2160,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
       ]
         .filter((item) => filter === "All" || item.group === filter)
         .filter((item) => [item.title, item.name, item.notes, item.comment, item.category, item.type, item.subtitle].join(" ").toLowerCase().includes(query.toLowerCase()))
-        .sort((a, b) => groupOrder[a.group] - groupOrder[b.group] || b.date.localeCompare(a.date));
+        .sort((a, b) => transactionSortKey(b).localeCompare(transactionSortKey(a)));
     },
     [data.expenses, data.incomes, data.investmentTransactions, data.investments, data.savingGoals, data.savingTransactions, filter, query],
   );
@@ -1899,38 +2401,85 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
     }
 
     setAiBusy(true);
-    setAiStatus("Parsing transaction...");
+    setAiStatus("Adding with AI...");
     setAiResult(null);
+    setAiReviewItems([]);
+    setAiResponseWarnings([]);
     setAiReviewFields([]);
     try {
-      const parsed = await parseNaturalTransaction({
+      const response = normalizeAiParseResponse(await parseNaturalTransaction({
         text: trimmed,
         currency: data.settings.currency,
         categories: data.categories,
-      });
-      const missing = missingRequiredFields(parsed);
-      const warnings = aiWarnings(parsed);
-      const confidence = aiConfidence(parsed);
-      setAiResult(parsed);
+      }));
+      const reviewItems = response.transactions.map(aiReviewItem);
+      const safeItems = reviewItems.filter((item) =>
+        aiConfidence(item.parsed) >= 0.85 &&
+        !aiWarnings(item.parsed).length &&
+        hasRequiredAiFields(item.parsed, data),
+      );
+      const needsReview = reviewItems.filter((item) => !safeItems.includes(item));
+
+      if (response.usage) setAiUsage(response.usage);
+      setAiResponseWarnings(response.warnings);
+      setAiReviewItems(reviewItems);
+
+      const firstParsed = reviewItems[0]?.parsed || null;
+      const missing = firstParsed ? missingRequiredFields(firstParsed) : [];
+      const warnings = firstParsed ? aiWarnings(firstParsed) : [];
+      const confidence = firstParsed ? aiConfidence(firstParsed) : 0;
+      setAiResult(firstParsed);
       setAiReviewFields(confidence < 0.75 ? missing.length ? missing : ["amount", "date", "category"] : missing);
 
       if (aiAutoConfirm) {
-        if (confidence >= 0.85 && !warnings.length && !missing.length) {
-          saveParsedResult(parsed);
-          setAiStatus("AI parsed and auto-confirmed the transaction.");
+        if (safeItems.length) {
+          safeItems.forEach((item) => saveParsedResult(item.parsed));
+        }
+
+        if (!needsReview.length) {
+          setAiReviewItems([]);
+          setAiResult(null);
+          setAiStatus(`${safeItems.length} transaction${safeItems.length === 1 ? "" : "s"} saved.`);
           return;
         }
-        setAiStatus("AI parsed the transaction, but auto-confirm was skipped. Please review before saving.");
+
+        setAiReviewItems(needsReview);
+        setAiResult(needsReview.length === 1 ? needsReview[0].parsed : null);
+        setAiStatus(`${safeItems.length} transaction${safeItems.length === 1 ? "" : "s"} saved, ${needsReview.length} needs review.`);
+        if (needsReview.length === 1) applyParsedResult(needsReview[0].parsed);
       } else {
-        setAiStatus(confidence < 0.75 ? "Please review this transaction carefully." : "Parsed and filled the form. Review before saving.");
+        setAiStatus(reviewItems.length > 1 ? "Review the AI results before saving." : confidence < 0.75 ? "Please review this transaction carefully." : "Parsed and filled the form. Review before saving.");
       }
-      applyParsedResult(parsed);
+
+      if (!aiAutoConfirm && reviewItems.length === 1) {
+        applyParsedResult(firstParsed);
+      }
     } catch (error) {
       console.error(error);
       setAiStatus(error?.message || "AI parsing failed. Please reword it and try again.");
     } finally {
       setAiBusy(false);
     }
+  };
+
+  const updateAiReviewItem = (id, patch) => {
+    setAiReviewItems((items) =>
+      items.map((item) =>
+        item.id === id ? { ...item, parsed: { ...item.parsed, ...patch } } : item,
+      ),
+    );
+  };
+
+  const confirmAiItems = (items) => {
+    if (!items.length) {
+      setAiStatus("Select at least one AI result to save.");
+      return;
+    }
+
+    items.forEach((item) => saveParsedResult(item.parsed));
+    setAiReviewItems((current) => current.filter((item) => !items.some((saved) => saved.id === item.id)));
+    setAiResult(null);
+    setAiStatus(`${items.length} transaction${items.length === 1 ? "" : "s"} saved.`);
   };
 
   const recordRecurringNow = (item) =>
@@ -1950,6 +2499,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
     }
     setFormError("");
     const status = getTransactionStatus(form.date);
+    const createdAt = new Date().toISOString();
     update((draft) => {
       if (editingTransactionId) {
         if (kind === "income") {
@@ -1977,6 +2527,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
           notes: form.notes,
           status,
           appliedAt: appliedAtFor(status, form.date),
+          createdAt,
         });
       } else {
         draft.expenses.push({
@@ -1989,6 +2540,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
           notes: form.notes,
           status,
           appliedAt: appliedAtFor(status, form.date),
+          createdAt,
         });
       }
       return draft;
@@ -2090,28 +2642,33 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
   return (
     <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
       <div className="space-y-5">
+        {false && (
+          <>
         <ActionButton
           icon={Sparkles}
-          title={aiOpen ? "Close AI Parser" : "AI Prompt"}
-          description="Parse natural-language transactions"
+          title={aiOpen ? "Close Add with AI" : "Add with AI"}
+          description="Create up to 5 transactions"
           tone="purple"
           open={aiOpen}
           onClick={() => setAiOpen(!aiOpen)}
         />
         {aiOpen && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }}>
-            <Panel title="AI transaction parser">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-                {syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}
+            <Panel title="Add with AI">
+              <div className="grid gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center">
+                <span>{syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}</span>
+                <span className="rounded-md bg-white px-2 py-1 text-xs font-black text-[var(--accent-strong)] dark:bg-zinc-950">
+                  {aiUsage.bypass ? "Developer bypass" : `${aiUsage.count} used / ${aiUsage.remaining} left`}
+                </span>
               </div>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">AI prompt</span>
+                <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Describe transactions</span>
                 <textarea
                   value={aiText}
                   maxLength={AI_PROMPT_LIMIT}
                   onChange={(event) => setAiText(event.target.value)}
-                  rows={5}
-                  placeholder={"Spent R450 on fuel yesterday\nGot paid R22000 today\nAdd R2000 to TFSA next Friday\nWithdraw R500 from Emergency Fund\nNetflix R199 every month"}
+                  rows={4}
+                  placeholder={"Example: Spent R450 on fuel yesterday and R200 on food today"}
                   className="w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
                 />
                 <span className={cx("mt-1.5 block text-right text-xs font-black", aiText.length >= AI_PROMPT_LIMIT ? "text-amber-600 dark:text-amber-300" : "text-zinc-500 dark:text-zinc-400")}>
@@ -2136,10 +2693,11 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
                 </button>
               </label>
               <Button onClick={parseWithAi} disabled={aiBusy || !syncUser || !aiText.trim() || aiText.trim().length > AI_PROMPT_LIMIT}>
-                <Sparkles size={16} /> {aiBusy ? "Parsing..." : "Parse with AI"}
+                <Sparkles size={16} /> {aiBusy ? "Adding..." : "Add with AI"}
               </Button>
               {aiStatus && <p className={cx("text-sm font-semibold", aiConfidence(aiResult) < 0.75 ? "text-amber-700 dark:text-amber-300" : "text-zinc-600 dark:text-zinc-300")}>{aiStatus}</p>}
-              {aiResult && (
+              {Boolean(aiResponseWarnings.length) && <p className="text-sm font-bold text-amber-700 dark:text-amber-300">{aiResponseWarnings.join(" ")}</p>}
+              {aiResult && aiReviewItems.length <= 1 && (
                 <div className={cx("rounded-lg border bg-white p-3 text-xs font-semibold dark:bg-zinc-950", aiConfidence(aiResult) < 0.75 ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -2169,8 +2727,68 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
                   {Boolean(aiWarnings(aiResult).length) && <p className="mt-2">{aiWarnings(aiResult).join(" ")}</p>}
                 </div>
               )}
+              {aiReviewItems.length > 1 && (
+                <div className="space-y-3">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button onClick={() => confirmAiItems(aiReviewItems)}>
+                      <CheckCircle2 size={16} /> Confirm All
+                    </Button>
+                    <Button variant="secondary" onClick={() => confirmAiItems(aiReviewItems.filter((item) => item.selected))}>
+                      Confirm Selected
+                    </Button>
+                  </div>
+                  {aiReviewItems.map((item, index) => {
+                    const parsed = item.parsed;
+                    const confidence = aiConfidence(parsed);
+                    const warnings = aiWarnings(parsed);
+                    return (
+                      <div key={item.id} className={cx("rounded-lg border bg-white p-3 text-xs font-semibold dark:bg-zinc-950", confidence < 0.75 || warnings.length ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
+                        <div className="mb-3 flex items-start justify-between gap-2">
+                          <label className="flex min-w-0 items-center gap-2 text-sm font-black text-zinc-900 dark:text-white">
+                            <input
+                              type="checkbox"
+                              checked={item.selected}
+                              onChange={(event) =>
+                                setAiReviewItems((items) =>
+                                  items.map((entry) => entry.id === item.id ? { ...entry, selected: event.target.checked } : entry),
+                                )
+                              }
+                            />
+                            <span className="truncate">AI item {index + 1}</span>
+                          </label>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 font-black text-[var(--accent-strong)]">
+                              {Math.round(confidence * 100)}%
+                            </span>
+                            <TinyIconButton label="Remove AI result" onClick={() => setAiReviewItems((items) => items.filter((entry) => entry.id !== item.id))}>
+                              <Trash2 size={14} />
+                            </TinyIconButton>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Select label="Type" value={parsed.transactionType} options={["income", "expense", "saving_deposit", "saving_withdrawal", "investment_contribution", "investment_withdrawal"]} onChange={(value) => updateAiReviewItem(item.id, { transactionType: value })} />
+                          <Input label="Title" value={parsed.title} onChange={(value) => updateAiReviewItem(item.id, { title: value })} />
+                          <AmountInput label="Amount" value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />
+                          <DateInput label="Date" value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
+                          <Input label="Category / account" value={parsed.accountName || parsed.category} onChange={(value) => updateAiReviewItem(item.id, { category: value, accountName: value })} />
+                          <Select label="Frequency" value={parsed.frequency || "none"} options={["none", "weekly", "monthly", "yearly"]} onChange={(value) => updateAiReviewItem(item.id, { frequency: value, isRecurring: value !== "none" })} />
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="rounded bg-zinc-100 px-2 py-1 font-black uppercase text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{parsed.transactionType.replaceAll("_", " ")}</span>
+                          <span className="rounded bg-zinc-100 px-2 py-1 font-black text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{parsed.isRecurring ? "Recurring" : "Once-off"}</span>
+                          {warnings.map((warning) => (
+                            <span key={warning} className="rounded bg-amber-100 px-2 py-1 font-black text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">{warning}</span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Panel>
           </motion.div>
+        )}
+          </>
         )}
 
         <ActionButton
@@ -2508,7 +3126,14 @@ function Recurring({ data, update }) {
               key={item.id}
               left={
                 <>
-                  <p className="font-semibold">{item.title || item.type || item.category}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold">{item.title || item.type || item.category}</p>
+                    {item.active === false && (
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase text-amber-700 dark:bg-amber-950/50 dark:text-amber-200">
+                        Paused
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     {item.kind === "income" ? item.type : item.category} - {item.frequency} - Next {displayDate(item.next)}
                   </p>
@@ -3758,7 +4383,7 @@ function Panel({ title, children }) {
   );
 }
 
-function Input({ label, value, onChange, type = "text", min }) {
+function Input({ label, value, onChange, type = "text", min, disabled = false }) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
@@ -3766,8 +4391,12 @@ function Input({ label, value, onChange, type = "text", min }) {
         type={type}
         min={min}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+        className={cx(
+          "w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
+          disabled && "cursor-not-allowed opacity-70",
+        )}
       />
     </label>
   );
@@ -3952,14 +4581,18 @@ function FinancialStartInput({ label, value, onChange }) {
   );
 }
 
-function Select({ label, value, options, labels = {}, onChange }) {
+function Select({ label, value, options, labels = {}, onChange, disabled = false }) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
       <select
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+        className={cx(
+          "w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
+          disabled && "cursor-not-allowed opacity-70",
+        )}
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -4151,6 +4784,11 @@ function CompactUpcomingRow({ item, currency, onRecordRecurring, onToggleRecurri
                 <CalendarDays size={10} /> Recurring
               </span>
             )}
+            {item.source === "recurring" && item.active === false && (
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase text-amber-700 dark:bg-amber-950/50 dark:text-amber-200">
+                Paused
+              </span>
+            )}
           </div>
           <p className="mt-1 truncate text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
             {item.subtitle} {item.frequency ? `- ${item.frequency}` : ""} - Due {displayDate(item.dueDate)}
@@ -4164,7 +4802,7 @@ function CompactUpcomingRow({ item, currency, onRecordRecurring, onToggleRecurri
       <div className="mt-2 flex justify-end gap-1.5">
         {item.source === "recurring" ? (
           <>
-            <TinyIconButton label={item.kind === "income" ? "Received" : "Paid"} onClick={onRecordRecurring}>
+            <TinyIconButton label={item.kind === "income" ? "Received" : "Paid"} onClick={item.active === false ? undefined : onRecordRecurring}>
               <CheckCircle2 size={14} />
             </TinyIconButton>
             <TinyIconButton label={item.active ? "Pause" : "Resume"} onClick={onToggleRecurring}>
@@ -4225,7 +4863,7 @@ export default function BudgetFlowApp() {
 
   return (
     <Shell data={data} update={update} tab={tab} setTab={setTab}>
-      {tab === "Dashboard" && <Dashboard data={data} update={update} />}
+      {tab === "Dashboard" && <Dashboard data={data} update={update} syncUser={syncUser} />}
       {tab === "Transactions" && <Transactions data={data} update={update} syncUser={syncUser} setTab={setTab} setAiDraft={setAiDraft} />}
       {tab === "Recurring" && <Recurring data={data} update={update} />}
       {tab === "Savings" && <Savings data={data} update={update} aiDraft={aiDraft} clearAiDraft={() => setAiDraft(null)} />}

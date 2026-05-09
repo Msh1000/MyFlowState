@@ -10,6 +10,9 @@ function friendlyCallableError(error) {
 
   if (details.reason) return details.reason;
   if (code === "functions/unauthenticated") return "Please sign in to use AI transaction parsing.";
+  if (code === "functions/resource-exhausted") return "Daily AI limit reached.";
+  if (message.includes("Daily AI limit reached")) return "Daily AI limit reached.";
+  if (message.includes("Please wait a moment")) return "Please wait a moment before trying again.";
   if (code === "functions/failed-precondition") return "AI parsing is not configured yet. Please redeploy the function with GROQ_API_KEY set.";
   if (code === "functions/invalid-argument") return message || "Please enter a transaction to parse.";
   if (code === "functions/internal" || message === "internal") {
@@ -19,13 +22,15 @@ function friendlyCallableError(error) {
   return message || "AI parsing failed. Please reword it and try again.";
 }
 
-export async function parseNaturalTransaction({ text, currency, categories }) {
+export async function parseNaturalTransaction({ text, currency, categories, savingGoals = [], investments = [] }) {
   try {
     const result = await parseTransaction({
       text,
       today: new Date().toISOString().slice(0, 10),
       currency,
       categories,
+      savingGoals,
+      investments,
     });
 
     return result.data;
