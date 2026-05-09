@@ -22,7 +22,7 @@ import {
   Pencil,
   CheckCircle2,
   PauseCircle,
-  Bell,
+  Sparkles,
   ChevronRight,
   Grid2X2,
 } from "lucide-react";
@@ -39,9 +39,12 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import { parseNaturalTransaction } from "./aiTransactions";
 import { auth, db, googleProvider } from "./firebase";
 
 const STORAGE_KEY = "budgetflow_web_v1";
+const AI_AUTO_CONFIRM_KEY = "budgetflow_ai_auto_confirm";
+const AI_PROMPT_LIMIT = 300;
 const CLOUD_DATA_VERSION = "1";
 const CLOUD_SYNC_KEYS = [
   "settings",
@@ -974,6 +977,14 @@ function useBudgetStore() {
   return [data, update, replaceData];
 }
 
+function useFirebaseUser() {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => onAuthStateChanged(auth, (nextUser) => setUser(nextUser)), []);
+
+  return user;
+}
+
 function usePaymentReminders(data) {
   useEffect(() => {
     if (!data.settings.paymentReminders || typeof Notification === "undefined" || Notification.permission !== "granted") return;
@@ -1225,17 +1236,6 @@ function Dashboard({ data, update }) {
       .slice(0, 5);
   }, [data.expenses, data.incomes, data.investmentTransactions, data.investments, data.savingGoals, data.savingTransactions]);
 
-  const toggleDashboardReminders = async () => {
-    const next = !data.settings.paymentReminders;
-    if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
-      await Notification.requestPermission();
-    }
-    update((draft) => {
-      draft.settings.paymentReminders = next;
-      return draft;
-    });
-  };
-
   return (
     <div className="space-y-5 sm:space-y-6">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1262,20 +1262,6 @@ function Dashboard({ data, update }) {
                 </option>
               ))}
           </select>
-          <button
-            className={cx(
-              "grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition",
-              data.settings.paymentReminders
-                ? "border-[var(--accent)] bg-[var(--accent-strong)] text-white"
-                : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-800 dark:bg-[#0d0d18] dark:text-zinc-200",
-            )}
-            type="button"
-            aria-label={data.settings.paymentReminders ? "Disable payment reminders" : "Enable payment reminders"}
-            title={data.settings.paymentReminders ? "Payment reminders enabled" : "Enable payment reminders"}
-            onClick={toggleDashboardReminders}
-          >
-            {data.settings.paymentReminders ? <Bell size={16} fill="currentColor" /> : <Bell size={16} />}
-          </button>
         </div>
       </section>
 
@@ -1566,10 +1552,49 @@ function snapToForm(ref, setHighlight) {
   });
 }
 
-function Transactions({ data, update }) {
+function normalizeAiType(parsed) {
+  const raw = String(parsed?.transactionType || parsed?.type || parsed?.kind || "").toLowerCase();
+  if (raw.includes("saving") && raw.includes("withdraw")) return "saving_withdrawal";
+  if (raw.includes("saving")) return "saving_deposit";
+  if (raw.includes("investment") && raw.includes("withdraw")) return "investment_withdrawal";
+  if (raw.includes("investment")) return "investment_contribution";
+  if (raw.includes("income")) return "income";
+  if (raw.includes("expense")) return "expense";
+  return raw;
+}
+
+function normalizeAiFrequency(parsed) {
+  const raw = String(parsed?.frequency || "").toLowerCase();
+  if (raw.includes("week")) return "Weekly";
+  if (raw.includes("year") || raw.includes("annual")) return "Yearly";
+  if (raw.includes("custom")) return "Custom";
+  return "Monthly";
+}
+
+function aiWarnings(parsed) {
+  return Array.isArray(parsed?.warnings) ? parsed.warnings.filter(Boolean) : [];
+}
+
+function aiConfidence(parsed) {
+  return Number(parsed?.confidence || 0);
+}
+
+function accountIdByName(items, accountName) {
+  const normalized = String(accountName || "").trim().toLowerCase();
+  return items.find((item) => item.name?.toLowerCase() === normalized)?.id || items[0]?.id || "";
+}
+
+function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
   const [kind, setKind] = useState("expense");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
+  const [aiText, setAiText] = useState("");
+  const [aiStatus, setAiStatus] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiAutoConfirm, setAiAutoConfirm] = useState(() => localStorage.getItem(AI_AUTO_CONFIRM_KEY) === "true");
+  const [aiReviewFields, setAiReviewFields] = useState([]);
   const [showTransactionForm, setShowTransactionForm] = useState(false);
   const [showRecurringForm, setShowRecurringForm] = useState(false);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
@@ -1601,6 +1626,10 @@ function Transactions({ data, update }) {
     notes: "",
   });
   const [editingRecurringId, setEditingRecurringId] = useState("");
+
+  useEffect(() => {
+    localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
+  }, [aiAutoConfirm]);
 
   const items = useMemo(
     () => {
@@ -1720,6 +1749,188 @@ function Transactions({ data, update }) {
   const cancelRecurringEdit = () => {
     resetRecurringForm();
     setShowRecurringForm(false);
+  };
+
+  const applyParsedResult = (parsed) => {
+    const transactionType = normalizeAiType(parsed);
+    const amount = parsed.amount ? formatAmount(parsed.amount).replace(/\.00$/, "") : "";
+    const frequency = normalizeAiFrequency(parsed);
+    const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
+    const canUseRecurringForm = parsed.isRecurring && (transactionType === "income" || transactionType === "expense");
+
+    if (canUseRecurringForm) {
+      const recurringKind = transactionType === "income" ? "income" : "expense";
+      setShowRecurringForm(true);
+      setEditingRecurringId("");
+      setRecurringForm({
+        kind: recurringKind,
+        title: parsed.title || "",
+        amount,
+        category,
+        type: parsed.category || "Salary",
+        startDate: parsed.date || today(),
+        frequency,
+        customDays: 30,
+        notes: parsed.notes || "",
+      });
+      snapToForm(recurringFormRef, setHighlightRecurringForm);
+      return;
+    }
+
+    if (transactionType === "income" || transactionType === "expense") {
+      const nextKind = transactionType;
+      setKind(nextKind);
+      setShowTransactionForm(true);
+      setEditingTransactionId("");
+      setForm({
+        title: parsed.title || "",
+        amount,
+        date: parsed.date || today(),
+        category,
+        type: parsed.category || "Salary",
+        notes: parsed.notes || "",
+      });
+      snapToForm(transactionFormRef, setHighlightTransactionForm);
+      return;
+    }
+
+    if (transactionType === "saving_deposit" || transactionType === "saving_withdrawal") {
+      setAiDraft({
+        target: "Savings",
+        payload: {
+          savingGoalId: accountIdByName(data.savingGoals, parsed.accountName || parsed.title),
+          type: transactionType === "saving_withdrawal" ? "withdrawal" : "deposit",
+          amount,
+          date: parsed.date || today(),
+          comment: parsed.notes || parsed.title || "",
+        },
+      });
+      setTab("Savings");
+      return;
+    }
+
+    if (transactionType === "investment_contribution" || transactionType === "investment_withdrawal") {
+      setAiDraft({
+        target: "Investments",
+        payload: {
+          investmentId: accountIdByName(data.investments, parsed.accountName || parsed.title),
+          type: transactionType === "investment_withdrawal" ? "withdrawal" : "contribution",
+          amount,
+          date: parsed.date || today(),
+          comment: parsed.notes || parsed.title || "",
+        },
+      });
+      setTab("Investments");
+    }
+  };
+
+  const missingRequiredFields = (parsed) => {
+    const transactionType = normalizeAiType(parsed);
+    const missing = [];
+    if (!parsed?.amount) missing.push("amount");
+    if (!parsed?.date) missing.push("date");
+    if ((transactionType === "expense" || transactionType === "income") && !parsed?.category) missing.push("category");
+    if (transactionType.startsWith("saving") && !accountIdByName(data.savingGoals, parsed?.accountName || parsed?.title)) missing.push("account");
+    if (transactionType.startsWith("investment") && !accountIdByName(data.investments, parsed?.accountName || parsed?.title)) missing.push("account");
+    return missing;
+  };
+
+  const saveParsedResult = (parsed) => {
+    const transactionType = normalizeAiType(parsed);
+    const amount = parseAmount(parsed.amount);
+    const date = parsed.date || today();
+    const status = getTransactionStatus(date);
+    update((draft) => {
+      if (parsed.isRecurring && (transactionType === "income" || transactionType === "expense")) {
+        const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
+        draft.recurring.push({
+          id: uid(),
+          kind: transactionType,
+          title: parsed.title || (transactionType === "income" ? parsed.category || "Income" : category),
+          amount,
+          category,
+          type: parsed.category || "Salary",
+          startDate: date,
+          frequency: normalizeAiFrequency(parsed),
+          customDays: 30,
+          notes: parsed.notes || "",
+          active: true,
+        });
+        return draft;
+      }
+      if (transactionType === "income") {
+        draft.incomes.push({ id: uid(), name: parsed.title || parsed.category || "Income", amount, date, type: parsed.category || "Salary", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date) });
+      }
+      if (transactionType === "expense") {
+        const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
+        draft.expenses.push({ id: uid(), title: parsed.title || category, amount, date, category, paymentMethod: "Card", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date) });
+      }
+      if (transactionType === "saving_deposit" || transactionType === "saving_withdrawal") {
+        const savingGoalId = accountIdByName(draft.savingGoals, parsed.accountName || parsed.title);
+        const goal = draft.savingGoals.find((item) => item.id === savingGoalId);
+        const type = transactionType === "saving_withdrawal" ? "withdrawal" : "deposit";
+        draft.savingTransactions.push({ id: uid(), savingGoalId, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), createdAt: today() });
+        if (goal && status === "applied") goal.currentBalance = Math.max(0, Number(goal.currentBalance || 0) + movementDelta(type, amount));
+      }
+      if (transactionType === "investment_contribution" || transactionType === "investment_withdrawal") {
+        const investmentId = accountIdByName(draft.investments, parsed.accountName || parsed.title);
+        const investment = draft.investments.find((item) => item.id === investmentId);
+        const type = transactionType === "investment_withdrawal" ? "withdrawal" : "contribution";
+        draft.investmentTransactions.push({ id: uid(), investmentId, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), affectsCash: true, createdAt: today() });
+        if (investment && status === "applied") investment.currentBalance = Math.max(0, Number(investment.currentBalance || 0) + contributionDelta(type, amount));
+      }
+      return draft;
+    });
+  };
+
+  const parseWithAi = async () => {
+    if (!syncUser) {
+      setAiStatus("Please sign in to use AI transaction parsing.");
+      return;
+    }
+    const trimmed = aiText.trim();
+    if (!trimmed) {
+      setAiStatus("Type a transaction first.");
+      return;
+    }
+    if (trimmed.length > AI_PROMPT_LIMIT) {
+      setAiStatus(`Keep the AI prompt under ${AI_PROMPT_LIMIT} characters.`);
+      return;
+    }
+
+    setAiBusy(true);
+    setAiStatus("Parsing transaction...");
+    setAiResult(null);
+    setAiReviewFields([]);
+    try {
+      const parsed = await parseNaturalTransaction({
+        text: trimmed,
+        currency: data.settings.currency,
+        categories: data.categories,
+      });
+      const missing = missingRequiredFields(parsed);
+      const warnings = aiWarnings(parsed);
+      const confidence = aiConfidence(parsed);
+      setAiResult(parsed);
+      setAiReviewFields(confidence < 0.75 ? missing.length ? missing : ["amount", "date", "category"] : missing);
+
+      if (aiAutoConfirm) {
+        if (confidence >= 0.85 && !warnings.length && !missing.length) {
+          saveParsedResult(parsed);
+          setAiStatus("AI parsed and auto-confirmed the transaction.");
+          return;
+        }
+        setAiStatus("AI parsed the transaction, but auto-confirm was skipped. Please review before saving.");
+      } else {
+        setAiStatus(confidence < 0.75 ? "Please review this transaction carefully." : "Parsed and filled the form. Review before saving.");
+      }
+      applyParsedResult(parsed);
+    } catch (error) {
+      console.error(error);
+      setAiStatus(error?.message || "AI parsing failed. Please reword it and try again.");
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const recordRecurringNow = (item) =>
@@ -1879,6 +2090,89 @@ function Transactions({ data, update }) {
   return (
     <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
       <div className="space-y-5">
+        <ActionButton
+          icon={Sparkles}
+          title={aiOpen ? "Close AI Parser" : "AI Prompt"}
+          description="Parse natural-language transactions"
+          tone="purple"
+          open={aiOpen}
+          onClick={() => setAiOpen(!aiOpen)}
+        />
+        {aiOpen && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }}>
+            <Panel title="AI transaction parser">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                {syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}
+              </div>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">AI prompt</span>
+                <textarea
+                  value={aiText}
+                  maxLength={AI_PROMPT_LIMIT}
+                  onChange={(event) => setAiText(event.target.value)}
+                  rows={5}
+                  placeholder={"Spent R450 on fuel yesterday\nGot paid R22000 today\nAdd R2000 to TFSA next Friday\nWithdraw R500 from Emergency Fund\nNetflix R199 every month"}
+                  className="w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+                />
+                <span className={cx("mt-1.5 block text-right text-xs font-black", aiText.length >= AI_PROMPT_LIMIT ? "text-amber-600 dark:text-amber-300" : "text-zinc-500 dark:text-zinc-400")}>
+                  {aiText.length} / {AI_PROMPT_LIMIT}
+                </span>
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                <span>
+                  <span className="block text-sm font-black text-zinc-950 dark:text-white">Auto-confirm AI result</span>
+                  <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400">When off, AI will only fill the form for review.</span>
+                </span>
+                <button
+                  type="button"
+                  aria-pressed={aiAutoConfirm}
+                  className={cx("h-7 w-12 rounded-full p-1 transition", aiAutoConfirm ? "bg-[var(--accent-strong)]" : "bg-zinc-200 dark:bg-zinc-800")}
+                  onClick={() => {
+                    if (!aiAutoConfirm && !window.confirm("Auto-confirm will save AI-parsed transactions without manual review when confidence is high. Continue?")) return;
+                    setAiAutoConfirm(!aiAutoConfirm);
+                  }}
+                >
+                  <span className={cx("block h-5 w-5 rounded-full bg-white shadow-sm transition", aiAutoConfirm && "translate-x-5")} />
+                </button>
+              </label>
+              <Button onClick={parseWithAi} disabled={aiBusy || !syncUser || !aiText.trim() || aiText.trim().length > AI_PROMPT_LIMIT}>
+                <Sparkles size={16} /> {aiBusy ? "Parsing..." : "Parse with AI"}
+              </Button>
+              {aiStatus && <p className={cx("text-sm font-semibold", aiConfidence(aiResult) < 0.75 ? "text-amber-700 dark:text-amber-300" : "text-zinc-600 dark:text-zinc-300")}>{aiStatus}</p>}
+              {aiResult && (
+                <div className={cx("rounded-lg border bg-white p-3 text-xs font-semibold dark:bg-zinc-950", aiConfidence(aiResult) < 0.75 ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-zinc-900 dark:text-white">{aiResult.title || "Parsed transaction"}</p>
+                      <p className="mt-1">{normalizeAiType(aiResult).replaceAll("_", " ")}</p>
+                    </div>
+                    <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 font-black text-[var(--accent-strong)]">
+                      {Math.round(aiConfidence(aiResult) * 100)}%
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {[
+                      ["Amount", aiResult.amount ? money(aiResult.amount, data.settings.currency) : "Missing"],
+                      ["Date", aiResult.date ? displayDate(aiResult.date) : "Missing"],
+                      ["Category", aiResult.category || "Unspecified"],
+                      ["Account", aiResult.accountName || "Unspecified"],
+                      ["Recurring", aiResult.isRecurring ? "Yes" : "No"],
+                      ["Frequency", aiResult.frequency || "Not recurring"],
+                    ].map(([label, value]) => (
+                      <div key={label} className={cx("rounded-md bg-zinc-50 px-2 py-1.5 dark:bg-zinc-900", aiReviewFields.some((field) => label.toLowerCase().includes(field)) && "ring-2 ring-amber-300 dark:ring-amber-500")}>
+                        <span className="block text-[10px] font-black uppercase tracking-[0.06em] text-zinc-400">{label}</span>
+                        <span className="text-zinc-800 dark:text-zinc-100">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {aiConfidence(aiResult) < 0.75 && <p className="mt-3 font-black">Please review this transaction carefully.</p>}
+                  {Boolean(aiWarnings(aiResult).length) && <p className="mt-2">{aiWarnings(aiResult).join(" ")}</p>}
+                </div>
+              )}
+            </Panel>
+          </motion.div>
+        )}
+
         <ActionButton
           icon={Plus}
           title={showTransactionForm ? "Close Transaction" : "Add Transaction"}
@@ -2282,7 +2576,7 @@ function Recurring({ data, update }) {
   );
 }
 
-function Savings({ data, update }) {
+function Savings({ data, update, aiDraft, clearAiDraft }) {
   const range = getFinancialRange(data.settings);
   const [showForm, setShowForm] = useState(false);
   const [showMovementForm, setShowMovementForm] = useState(false);
@@ -2318,6 +2612,25 @@ function Savings({ data, update }) {
     .reduce((sum, item) => sum + Number(item.amount || 0) * (item.type === "withdrawal" ? -1 : 1), 0);
   const selectedGoalId = movement.savingGoalId || data.savingGoals[0]?.id || "";
   const shownGoals = showAllGoals ? data.savingGoals : data.savingGoals.slice(0, SHOW_LIMIT);
+
+  useEffect(() => {
+    if (aiDraft?.target !== "Savings") return;
+    const frame = requestAnimationFrame(() => {
+      setShowMovementForm(true);
+      setEditingTransactionId("");
+      setMovement({
+        savingGoalId: aiDraft.payload.savingGoalId || data.savingGoals[0]?.id || "",
+        type: aiDraft.payload.type || "deposit",
+        amount: aiDraft.payload.amount || "",
+        date: aiDraft.payload.date || today(),
+        comment: aiDraft.payload.comment || "",
+      });
+      snapToForm(movementFormRef, setHighlightMovementForm);
+      clearAiDraft();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [aiDraft, clearAiDraft, data.savingGoals]);
+
   const resetGoalForm = () => {
     setEditingGoalId("");
     setGoalError("");
@@ -2652,7 +2965,7 @@ function Savings({ data, update }) {
   );
 }
 
-function Investments({ data, update }) {
+function Investments({ data, update, aiDraft, clearAiDraft }) {
   const [showForm, setShowForm] = useState(false);
   const [showTransactionForm, setShowTransactionForm] = useState(false);
   const [investmentError, setInvestmentError] = useState("");
@@ -2674,6 +2987,24 @@ function Investments({ data, update }) {
     notes: "",
   });
   const [transaction, setTransaction] = useState({ investmentId: "", type: "contribution", amount: "", date: today(), comment: "" });
+
+  useEffect(() => {
+    if (aiDraft?.target !== "Investments") return;
+    const frame = requestAnimationFrame(() => {
+      setShowTransactionForm(true);
+      setEditingTransactionId("");
+      setTransaction({
+        investmentId: aiDraft.payload.investmentId || data.investments[0]?.id || "",
+        type: aiDraft.payload.type || "contribution",
+        amount: aiDraft.payload.amount || "",
+        date: aiDraft.payload.date || today(),
+        comment: aiDraft.payload.comment || "",
+      });
+      snapToForm(investmentTransactionFormRef, setHighlightTransactionForm);
+      clearAiDraft();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [aiDraft, clearAiDraft, data.investments]);
 
   const resetInvestmentForm = () => {
     setEditingInvestmentId("");
@@ -3026,9 +3357,8 @@ function Investments({ data, update }) {
   );
 }
 
-function SettingsScreen({ data, update, setData }) {
+function SettingsScreen({ data, update, setData, syncUser }) {
   const [importError, setImportError] = useState("");
-  const [syncUser, setSyncUser] = useState(null);
   const [syncStatus, setSyncStatus] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [categoryName, setCategoryName] = useState("");
@@ -3041,8 +3371,6 @@ function SettingsScreen({ data, update, setData }) {
   useEffect(() => {
     currentDataRef.current = data;
   }, [data]);
-
-  useEffect(() => onAuthStateChanged(auth, (user) => setSyncUser(user)), []);
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json" });
@@ -3887,7 +4215,9 @@ function TinyIconButton({ children, label, onClick, active = false }) {
 
 export default function BudgetFlowApp() {
   const [data, update, setData] = useBudgetStore();
+  const syncUser = useFirebaseUser();
   const [tab, setTab] = useState("Dashboard");
+  const [aiDraft, setAiDraft] = useState(null);
 
   useEffect(() => {
     if (import.meta.env.DEV) runDevAssertions();
@@ -3896,11 +4226,11 @@ export default function BudgetFlowApp() {
   return (
     <Shell data={data} update={update} tab={tab} setTab={setTab}>
       {tab === "Dashboard" && <Dashboard data={data} update={update} />}
-      {tab === "Transactions" && <Transactions data={data} update={update} />}
+      {tab === "Transactions" && <Transactions data={data} update={update} syncUser={syncUser} setTab={setTab} setAiDraft={setAiDraft} />}
       {tab === "Recurring" && <Recurring data={data} update={update} />}
-      {tab === "Savings" && <Savings data={data} update={update} />}
-      {tab === "Investments" && <Investments data={data} update={update} />}
-      {tab === "Settings" && <SettingsScreen data={data} update={update} setData={setData} />}
+      {tab === "Savings" && <Savings data={data} update={update} aiDraft={aiDraft} clearAiDraft={() => setAiDraft(null)} />}
+      {tab === "Investments" && <Investments data={data} update={update} aiDraft={aiDraft} clearAiDraft={() => setAiDraft(null)} />}
+      {tab === "Settings" && <SettingsScreen data={data} update={update} setData={setData} syncUser={syncUser} />}
     </Shell>
   );
 }
