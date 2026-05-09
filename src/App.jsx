@@ -3053,6 +3053,38 @@ function SettingsScreen({ data, update, setData }) {
     URL.revokeObjectURL(anchor.href);
   };
 
+  const copyAndShareJson = async () => {
+    const fileName = `myflowstate-backup-${fileTimestamp()}.json`;
+    const backupJson = JSON.stringify({ ...getPersistentAppData(data), exportedAt: new Date().toISOString() }, null, 2);
+    const backupFile = new File([backupJson], fileName, { type: "application/json" });
+
+    try {
+      await navigator.clipboard.writeText(backupJson);
+      setImportError("Backup JSON copied to clipboard.");
+    } catch {
+      setImportError("Could not copy backup JSON to clipboard.");
+    }
+
+    try {
+      if (navigator.canShare?.({ files: [backupFile] })) {
+        await navigator.share({
+          title: "MyFlowState backup",
+          text: "MyFlowState JSON backup",
+          files: [backupFile],
+        });
+        setImportError("Backup JSON copied and shared.");
+      } else if (navigator.share) {
+        await navigator.share({
+          title: "MyFlowState backup",
+          text: backupJson,
+        });
+        setImportError("Backup JSON copied and shared.");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") setImportError("Backup JSON copied, but sharing failed.");
+    }
+  };
+
   const exportCsv = () => {
     const savingsNames = Object.fromEntries(data.savingGoals.map((item) => [item.id, item.name]));
     const investmentNames = Object.fromEntries(data.investments.map((item) => [item.id, item.name]));
@@ -3360,6 +3392,9 @@ function SettingsScreen({ data, update, setData }) {
       <Panel title="Backup and data">
         <Button onClick={exportJson} variant="secondary">
           <Download size={16} /> Export JSON backup
+        </Button>
+        <Button onClick={copyAndShareJson} variant="secondary">
+          <Upload size={16} /> Copy and share JSON backup
         </Button>
         <Button onClick={exportCsv} variant="secondary">
           <Download size={16} /> Export CSV transactions
