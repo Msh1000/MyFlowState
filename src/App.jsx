@@ -33,6 +33,7 @@ import {
   ChevronRight,
   Grid2X2,
   Mail,
+  Mic,
   X,
 } from "lucide-react";
 import {
@@ -1795,6 +1796,117 @@ function transactionSortKey(item) {
   return `${item.date || ""}T${String(item.createdAt || item.appliedAt || "00:00:00").slice(11, 19)}`;
 }
 
+function speechRecognitionConstructor() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function appendAiVoiceTranscript(currentText, transcript) {
+  const cleanTranscript = String(transcript || "").trim().replace(/\s+/g, " ");
+  if (!cleanTranscript) return currentText;
+  const cleanCurrent = String(currentText || "").trimEnd();
+  const separator = cleanCurrent && !/[.,!?;:]$/.test(cleanCurrent) ? ". " : cleanCurrent ? " " : "";
+  return `${cleanCurrent}${separator}${cleanTranscript}`.slice(0, AI_PROMPT_LIMIT);
+}
+
+function friendlySpeechRecognitionError(error) {
+  const code = error?.error || error?.message || "";
+  if (code === "not-allowed" || code === "service-not-allowed") return "Microphone permission was denied. Allow microphone access and try again.";
+  if (code === "no-speech") return "No speech detected. Tap the mic and try again.";
+  if (code === "audio-capture") return "No microphone was found on this device.";
+  if (code === "network") return "Speech recognition could not connect. Check your connection and try again.";
+  if (code === "aborted") return "Voice input stopped.";
+  return "Voice input failed. Please try again.";
+}
+
+function useAiVoiceInput({ value, onChange, onStatus }) {
+  const [supported, setSupported] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const lastTapRef = useRef(0);
+  const valueRef = useRef(value);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    setSupported(Boolean(speechRecognitionConstructor()));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setListening(false);
+    onStatus("Voice input stopped.");
+  };
+
+  const startListening = () => {
+    const Recognition = speechRecognitionConstructor();
+    if (!Recognition) {
+      onStatus("Voice input is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = navigator.language || "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setListening(true);
+      onStatus("Listening...");
+    };
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results || [])
+        .map((result) => result?.[0]?.transcript || "")
+        .join(" ");
+      const nextText = appendAiVoiceTranscript(valueRef.current, transcript);
+      onChange(nextText);
+      onStatus(nextText.length >= AI_PROMPT_LIMIT ? `Voice text added and trimmed to ${AI_PROMPT_LIMIT} characters.` : "Voice text added. Review it, then press Add with AI.");
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      recognitionRef.current = null;
+      onStatus(friendlySpeechRecognitionError(event));
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+      onStatus("Voice input could not start. Please try again.");
+    }
+  };
+
+  const toggleListening = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 500) return;
+    lastTapRef.current = now;
+    if (listening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
+  return { listening, supported, toggleListening };
+}
+
 function AiAddPanel({ data, update, syncUser }) {
   const [aiText, setAiText] = useState("");
   const [aiStatus, setAiStatus] = useState("");
@@ -1803,6 +1915,7 @@ function AiAddPanel({ data, update, syncUser }) {
   const [aiResponseWarnings, setAiResponseWarnings] = useState([]);
   const [aiUsage, setAiUsage] = useState({ count: 0, remaining: 30, limit: 30, bypass: false });
   const [aiAutoConfirm, setAiAutoConfirm] = useState(() => localStorage.getItem(AI_AUTO_CONFIRM_KEY) === "true");
+  const aiVoice = useAiVoiceInput({ value: aiText, onChange: setAiText, onStatus: setAiStatus });
 
   useEffect(() => {
     localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
@@ -2103,14 +2216,22 @@ function AiAddPanel({ data, update, syncUser }) {
       </div>
       <label className="block">
         <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Describe transactions</span>
-        <textarea
-          value={aiText}
-          maxLength={AI_PROMPT_LIMIT}
-          onChange={(event) => setAiText(event.target.value)}
-          rows={3}
-          placeholder={"Example: Spent R450 on fuel yesterday and R200 on food today"}
-          className="w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
-        />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+          <textarea
+            value={aiText}
+            maxLength={AI_PROMPT_LIMIT}
+            onChange={(event) => setAiText(event.target.value)}
+            rows={3}
+            placeholder={"Example: Spent R450 on fuel yesterday and R200 on food today"}
+            className="min-w-0 resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+          />
+          <VoiceInputButton
+            disabled={aiBusy}
+            listening={aiVoice.listening}
+            onClick={aiVoice.toggleListening}
+            supported={aiVoice.supported}
+          />
+        </div>
         <span className={cx("mt-1.5 block text-right text-xs font-black", aiText.length >= AI_PROMPT_LIMIT ? "text-amber-600 dark:text-amber-300" : "text-zinc-500 dark:text-zinc-400")}>
           {aiText.length} / {AI_PROMPT_LIMIT}
         </span>
@@ -4963,6 +5084,42 @@ function Select({ label, value, options, labels = {}, onChange, disabled = false
         ))}
       </select>
     </label>
+  );
+}
+
+function VoiceInputButton({ disabled = false, listening = false, onClick, supported = true }) {
+  const unavailable = !supported;
+  const isDisabled = disabled || unavailable;
+  const label = unavailable
+    ? "Voice input is not supported in this browser"
+    : listening
+      ? "Stop voice input"
+      : "Start voice input";
+
+  return (
+    <motion.button
+      type="button"
+      aria-label={label}
+      aria-pressed={listening}
+      title={label}
+      disabled={isDisabled}
+      onClick={onClick}
+      className={cx(
+        "grid h-full min-h-[5.75rem] w-14 place-items-center rounded-lg border text-zinc-700 shadow-sm transition sm:w-16",
+        listening
+          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] ring-4 ring-[var(--accent-soft)]"
+          : "border-zinc-200 bg-white hover:border-[var(--accent)] hover:text-[var(--accent-strong)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100",
+        isDisabled && "cursor-not-allowed opacity-45 hover:border-zinc-200 hover:text-zinc-700 dark:hover:border-zinc-800 dark:hover:text-zinc-100",
+      )}
+      whileTap={isDisabled ? undefined : { scale: 0.96 }}
+    >
+      <motion.span
+        animate={listening ? { scale: [1, 1.1, 1], opacity: [1, 0.82, 1] } : { scale: 1, opacity: 1 }}
+        transition={listening ? { duration: 1, repeat: Infinity, ease: "easeInOut" } : { duration: 0.15 }}
+      >
+        <Mic size={20} />
+      </motion.span>
+    </motion.button>
   );
 }
 
