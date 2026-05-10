@@ -29,6 +29,7 @@ import {
   Pencil,
   CheckCircle2,
   PauseCircle,
+  PlayCircle,
   Sparkles,
   ChevronRight,
   Grid2X2,
@@ -501,6 +502,13 @@ function runDevAssertions() {
   console.assert(dueData.savingTransactions[0].status === "applied" && dueData.savingGoals[0].currentBalance === 50, "pending saving transaction should apply when due");
   console.assert(normalizeInvestment({ openingBalance: 999 }).currentBalance === 0, "investment openingBalance should be ignored");
   console.assert(advanceRecurringDate("2026-05-08", "Monthly") > "2026-05-08", "recurring item should schedule next due date");
+  const pausedRecurring = materializeDueRecurring({
+    incomes: [],
+    expenses: [],
+    investmentTransactions: [],
+    recurring: [{ id: "paused", kind: "expense", title: "Paused", amount: 10, category: "Food", startDate: "2000-01-01", frequency: "Monthly", active: false }],
+  });
+  console.assert(pausedRecurring.expenses.length === 0 && pausedRecurring.recurring[0].startDate === "2000-01-01", "paused recurring item should stay frozen");
 }
 
 function projection(currentBalance, monthlyContribution, annualReturn, years) {
@@ -1198,6 +1206,7 @@ function Shell({ data, update, tab, setTab, children }) {
 function Dashboard({ data, update, syncUser }) {
   const [selectedCycleId, setSelectedCycleId] = useState("current");
   const [aiOpen, setAiOpen] = useState(false);
+  const aiPanelRef = useRef(null);
   const range = useMemo(() => getFinancialRange(data.settings), [data.settings]);
   const currentTotals = useMemo(() => calculateCycleTotals(data, range), [data, range]);
   const selectedSnapshot = data.cycleSnapshots.find((item) => item.id === selectedCycleId);
@@ -1281,6 +1290,10 @@ function Dashboard({ data, update, syncUser }) {
       .slice(0, 5);
   }, [data.expenses, data.incomes, data.investmentTransactions, data.investments, data.savingGoals, data.savingTransactions]);
 
+  useEffect(() => {
+    if (aiOpen) snapToForm(aiPanelRef);
+  }, [aiOpen]);
+
   return (
     <div className="space-y-5 sm:space-y-6">
       <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1295,14 +1308,16 @@ function Dashboard({ data, update, syncUser }) {
             type="button"
             onClick={() => setAiOpen((open) => !open)}
             className={cx(
-              "relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border text-violet-700 shadow-sm transition before:absolute before:inset-1 before:rounded-md before:bg-violet-300/25 before:opacity-0 before:blur-md before:transition after:absolute after:right-1.5 after:top-1.5 after:h-1 after:w-1 after:rounded-full after:bg-white after:opacity-70 hover:border-violet-400 hover:bg-violet-100 hover:before:opacity-100 dark:text-violet-200",
+              "group relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border text-[var(--accent-strong)] shadow-sm transition before:absolute before:inset-1 before:rounded-md before:bg-[var(--accent)]/20 before:opacity-70 before:blur-md before:transition after:absolute after:right-1.5 after:top-1.5 after:h-1 after:w-1 after:rounded-full after:bg-white/90 after:opacity-70 hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:before:opacity-100 dark:text-zinc-100",
               aiOpen
-                ? "border-violet-500 bg-violet-600 text-white shadow-[0_0_24px_rgba(124,58,237,0.42)] before:opacity-100 dark:border-violet-400 dark:bg-violet-500"
-                : "border-violet-200 bg-violet-50 dark:border-violet-900/70 dark:bg-violet-950/40",
+                ? "border-[var(--accent)] bg-[var(--accent-strong)] text-white shadow-[0_0_24px_var(--accent)] before:opacity-100"
+                : "animate-[aiButtonPulse_3.6s_ease-in-out_infinite] border-[var(--accent)]/30 bg-white dark:bg-zinc-900",
             )}
             aria-label="Add with AI"
             title="Add with AI"
           >
+            <span className="pointer-events-none absolute left-2 top-2 h-1 w-1 rounded-full bg-[var(--accent)]/70 opacity-70 transition group-hover:scale-125" />
+            <span className="pointer-events-none absolute bottom-2 right-3 h-1.5 w-1.5 rounded-full bg-[var(--accent)]/45 opacity-70 transition group-hover:scale-125" />
             <Sparkles className={cx("relative z-10 transition", aiOpen && "scale-110")} size={18} />
           </button>
           <select
@@ -1324,11 +1339,13 @@ function Dashboard({ data, update, syncUser }) {
         </div>
       </section>
 
+      <AnimatePresence>
       {aiOpen && (
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
+        <motion.div ref={aiPanelRef} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }}>
           <AiAddPanel data={data} update={update} syncUser={syncUser} />
         </motion.div>
       )}
+      </AnimatePresence>
 
       <section className="grid gap-4 md:grid-cols-2">
         <div className="flex min-h-[230px] flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
@@ -1916,6 +1933,7 @@ function AiAddPanel({ data, update, syncUser }) {
   const [aiUsage, setAiUsage] = useState({ count: 0, remaining: 30, limit: 30, bypass: false });
   const [aiAutoConfirm, setAiAutoConfirm] = useState(() => localStorage.getItem(AI_AUTO_CONFIRM_KEY) === "true");
   const aiVoice = useAiVoiceInput({ value: aiText, onChange: setAiText, onStatus: setAiStatus });
+  const aiReviewRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
@@ -2206,9 +2224,13 @@ function AiAddPanel({ data, update, syncUser }) {
 
   const currentReviewItem = aiReviewItems[0];
 
+  useEffect(() => {
+    if (currentReviewItem) snapToForm(aiReviewRef);
+  }, [currentReviewItem?.id]);
+
   return (
     <Panel title="Add with AI">
-      <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center sm:p-2.5 sm:text-xs">
         <span>{syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}</span>
         <span className="rounded-md bg-white px-2 py-1 text-xs font-black text-[var(--accent-strong)] dark:bg-zinc-950">
           {aiUsage.bypass ? "Developer bypass" : `${aiUsage.formsCreated ?? aiUsage.count} forms used / ${aiUsage.remaining} left`}
@@ -2223,7 +2245,7 @@ function AiAddPanel({ data, update, syncUser }) {
             onChange={(event) => setAiText(event.target.value)}
             rows={3}
             placeholder={"Example: Spent R450 on fuel yesterday and R200 on food today"}
-            className="min-w-0 resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+            className="min-w-0 resize-none rounded-lg border border-zinc-200 bg-zinc-50/90 p-2.5 text-xs font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950 sm:p-3 sm:text-sm"
           />
           <VoiceInputButton
             disabled={aiBusy}
@@ -2236,9 +2258,9 @@ function AiAddPanel({ data, update, syncUser }) {
           {aiText.length} / {AI_PROMPT_LIMIT}
         </span>
       </label>
-      <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950 sm:p-2.5">
         <span>
-          <span className="block text-sm font-black text-zinc-950 dark:text-white">Auto-confirm AI result</span>
+          <span className="block text-xs font-black text-zinc-950 dark:text-white sm:text-sm">Auto-confirm AI result</span>
           <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400">Only high-confidence results with no warnings save automatically.</span>
         </span>
         <button
@@ -2256,11 +2278,11 @@ function AiAddPanel({ data, update, syncUser }) {
       <Button onClick={parseWithAi} disabled={aiBusy || !syncUser || !aiText.trim() || aiText.trim().length > AI_PROMPT_LIMIT}>
         <Sparkles size={16} /> {aiBusy ? "Adding..." : "Add with AI"}
       </Button>
-      {aiStatus && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{aiStatus}</p>}
-      {Boolean(aiResponseWarnings.length) && <p className="text-sm font-bold text-amber-700 dark:text-amber-300">{aiResponseWarnings.join(" ")}</p>}
+      {aiStatus && <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 sm:text-sm">{aiStatus}</p>}
+      {Boolean(aiResponseWarnings.length) && <p className="text-xs font-bold text-amber-700 dark:text-amber-300 sm:text-sm">{aiResponseWarnings.join(" ")}</p>}
       {Boolean(currentReviewItem) && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs font-black text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+        <div ref={aiReviewRef} className="space-y-3 scroll-mt-24">
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-2.5 py-2 text-xs font-black text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 sm:px-3">
             <span>Review {1} of {aiReviewItems.length}</span>
             <span>{aiReviewItems.length > 1 ? `${aiReviewItems.length - 1} waiting` : "Last item"}</span>
           </div>
@@ -2270,7 +2292,7 @@ function AiAddPanel({ data, update, syncUser }) {
             const confidence = aiConfidence(parsed);
             const warnings = aiWarnings(parsed);
             return (
-              <div className={cx("rounded-lg border bg-white p-2.5 text-xs font-semibold dark:bg-zinc-950", confidence < 0.75 || warnings.length ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
+              <div className={cx("rounded-lg border bg-white p-2 text-xs font-semibold dark:bg-zinc-950 sm:p-2.5", confidence < 0.75 || warnings.length ? "border-amber-300 text-amber-800 dark:border-amber-500/50 dark:text-amber-200" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300")}>
                 <div className="mb-2.5 flex items-start justify-between gap-2">
                   <div className="min-w-0 text-sm font-black text-zinc-900 dark:text-white">
                     <span className="truncate">{parsed.title || "AI item"}</span>
@@ -2340,6 +2362,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
   const [kind, setKind] = useState("expense");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
+  const [categoryFilter, setCategoryFilter] = useState("All Categories");
   const [aiText, setAiText] = useState("");
   const [aiStatus, setAiStatus] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
@@ -2380,6 +2403,10 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
     notes: "",
   });
   const [editingRecurringId, setEditingRecurringId] = useState("");
+  const categoryFilterOptions = useMemo(
+    () => uniqueList(["All Categories", ...data.categories, ...data.incomeTypes, "Savings", "Investments"]),
+    [data.categories, data.incomeTypes],
+  );
 
   useEffect(() => {
     localStorage.setItem(AI_AUTO_CONFIRM_KEY, String(aiAutoConfirm));
@@ -2427,10 +2454,15 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
           })),
       ]
         .filter((item) => filter === "All" || item.group === filter)
+        .filter((item) => {
+          if (categoryFilter === "All Categories") return true;
+          if (categoryFilter === "Savings" || categoryFilter === "Investments") return item.group === categoryFilter;
+          return [item.category, item.type, item.subtitle].some((value) => value === categoryFilter);
+        })
         .filter((item) => [item.title, item.name, item.notes, item.comment, item.category, item.type, item.subtitle].join(" ").toLowerCase().includes(query.toLowerCase()))
         .sort((a, b) => transactionSortKey(b).localeCompare(transactionSortKey(a)));
     },
-    [data.expenses, data.incomes, data.investmentTransactions, data.investments, data.savingGoals, data.savingTransactions, filter, query],
+    [categoryFilter, data.expenses, data.incomes, data.investmentTransactions, data.investments, data.savingGoals, data.savingTransactions, filter, query],
   );
   const shownItems = showAllTransactions ? items : items.slice(0, SHOW_LIMIT);
   const upcomingItems = useMemo(
@@ -2480,7 +2512,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
           group: item.kind === "income" ? "Income" : "Expenses",
           title: item.title || item.type || item.category || "Recurring item",
           subtitle: item.kind === "income" ? item.type : item.category,
-          dueDate: nextDueDate(item.startDate, item.frequency, item.customDays),
+          dueDate: item.active === false ? item.startDate : nextDueDate(item.startDate, item.frequency, item.customDays),
           sign: item.kind === "income" ? 1 : -1,
         })),
       ].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -2749,16 +2781,6 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
     setAiResult(null);
     setAiStatus(`${items.length} transaction${items.length === 1 ? "" : "s"} saved.`);
   };
-
-  const recordRecurringNow = (item) =>
-    update((draft) => {
-      const dueDate = item.dueDate && item.dueDate <= today() ? item.dueDate : today();
-      const exists = [...draft.incomes, ...draft.expenses, ...draft.investmentTransactions].some((entry) => entry.recurringId === item.id && entry.recurringDueDate === dueDate);
-      if (!exists) addRecurringTransaction(draft, item, dueDate);
-      const recurring = draft.recurring.find((entry) => entry.id === item.id);
-      if (recurring) recurring.startDate = advanceRecurringDate(dueDate, recurring.frequency, recurring.customDays);
-      return draft;
-    });
 
   const add = () => {
     if (!form.amount) {
@@ -3148,6 +3170,12 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
             value={filter}
             setValue={setFilter}
           />
+          <Select
+            label="Category filter"
+            value={categoryFilter}
+            options={categoryFilterOptions}
+            onChange={setCategoryFilter}
+          />
           <div className="relative">
             <Search className="absolute left-3 top-3 text-zinc-400" size={18} />
             <input
@@ -3202,7 +3230,6 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
                 key={item.id}
                 item={item}
                 currency={data.settings.currency}
-                onRecordRecurring={recordRecurringNow}
                 onToggleRecurring={() =>
                   update((draft) => {
                     const recurring = draft.recurring.find((entry) => entry.id === item.id);
@@ -4262,6 +4289,8 @@ function SettingsScreen({ data, update, setData, syncUser }) {
   const [categoryName, setCategoryName] = useState("");
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showAllCategories, setShowAllCategories] = useState(false);
+  const [showAllCloudSync, setShowAllCloudSync] = useState(false);
+  const [showAllBackup, setShowAllBackup] = useState(false);
   const currentDataRef = useRef(data);
   const range = getFinancialRange(data.settings);
   const shownCategories = showAllCategories ? data.categories : data.categories.slice(0, 4);
@@ -4552,7 +4581,7 @@ function SettingsScreen({ data, update, setData, syncUser }) {
   };
 
   return (
-    <div className="grid min-w-0 gap-4 sm:gap-5 lg:grid-cols-2">
+    <div className="grid min-w-0 gap-3 sm:gap-5 lg:grid-cols-2">
       <Panel title="Preferences">
         <Input
           label="Your name"
@@ -4683,19 +4712,24 @@ function SettingsScreen({ data, update, setData, syncUser }) {
             </p>
           </>
         ) : (
-          <div className="grid min-w-0 gap-3 sm:grid-cols-3">
+          <>
             <Button onClick={saveToCloud} disabled={syncBusy}>
               <Upload size={16} /> Save to Cloud
             </Button>
-            <Button onClick={loadFromCloud} disabled={syncBusy} variant="secondary">
-              <Download size={16} /> Load from Cloud
-            </Button>
-            <Button onClick={logout} disabled={syncBusy} variant="secondary">
-              Logout
-            </Button>
-          </div>
+            <ShowAllButton expanded={showAllCloudSync} onClick={() => setShowAllCloudSync(!showAllCloudSync)} description="Load, logout, and sync details" />
+            {showAllCloudSync && (
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                <Button onClick={loadFromCloud} disabled={syncBusy} variant="secondary">
+                  <Download size={16} /> Load from Cloud
+                </Button>
+                <Button onClick={logout} disabled={syncBusy} variant="secondary">
+                  Logout
+                </Button>
+              </div>
+            )}
+          </>
         )}
-        {syncStatus && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{syncStatus}</p>}
+        {syncStatus && (!syncUser || showAllCloudSync) && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{syncStatus}</p>}
       </Panel>
 
       <EmailSignInModal
@@ -4725,29 +4759,34 @@ function SettingsScreen({ data, update, setData, syncUser }) {
         <Button onClick={exportJson} variant="secondary">
           <Download size={16} /> Backup
         </Button>
-        <Button onClick={copyAndShareJson} variant="secondary">
-          <Upload size={16} /> Copy backup to clipboard
-        </Button>
-        <Button onClick={exportCsv} variant="secondary">
-          <Download size={16} /> Export transactions to CSV
-        </Button>
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-bold text-zinc-900 transition hover:border-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
-          <Upload size={16} /> Restore backup
-          <input
-            type="file"
-            accept="application/json"
-            hidden
-            onChange={(event) => event.target.files?.[0] && importJson(event.target.files[0])}
-          />
-        </label>
-        {importError && <p className="text-sm font-semibold text-rose-600 dark:text-rose-300">{importError}</p>}
-        <button
-          type="button"
-          className="w-full rounded-lg bg-rose-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-rose-700"
-          onClick={() => confirm("Reset all MyFlowState data?") && setData(createInitialState())}
-        >
-          Reset all data
-        </button>
+        <ShowAllButton expanded={showAllBackup} onClick={() => setShowAllBackup(!showAllBackup)} description="Copy, export, restore, and reset" />
+        {showAllBackup && (
+          <>
+            <Button onClick={copyAndShareJson} variant="secondary">
+              <Upload size={16} /> Copy backup to clipboard
+            </Button>
+            <Button onClick={exportCsv} variant="secondary">
+              <Download size={16} /> Export transactions to CSV
+            </Button>
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-xs font-bold text-zinc-900 transition hover:border-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 sm:px-4 sm:py-3 sm:text-sm">
+              <Upload size={16} /> Restore backup
+              <input
+                type="file"
+                accept="application/json"
+                hidden
+                onChange={(event) => event.target.files?.[0] && importJson(event.target.files[0])}
+              />
+            </label>
+            {importError && <p className="text-sm font-semibold text-rose-600 dark:text-rose-300">{importError}</p>}
+            <button
+              type="button"
+              className="w-full rounded-lg bg-rose-600 px-3 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-rose-700 sm:px-4 sm:py-3 sm:text-sm"
+              onClick={() => confirm("Reset all MyFlowState data?") && setData(createInitialState())}
+            >
+              Reset all data
+            </button>
+          </>
+        )}
       </Panel>
     </div>
   );
@@ -4859,9 +4898,9 @@ function EmailSignInModal({
 
 function Panel({ title, children }) {
   return (
-    <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_12px_35px_rgba(24,24,27,0.07)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
-      <h2 className="mb-4 break-words text-lg font-black tracking-tight">{title}</h2>
-      <div className="space-y-3">{children}</div>
+    <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-[0_12px_35px_rgba(24,24,27,0.07)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
+      <h2 className="mb-3 break-words text-base font-black tracking-tight sm:mb-4 sm:text-lg">{title}</h2>
+      <div className="space-y-2.5 sm:space-y-3">{children}</div>
     </section>
   );
 }
@@ -5105,7 +5144,7 @@ function VoiceInputButton({ disabled = false, listening = false, onClick, suppor
       disabled={isDisabled}
       onClick={onClick}
       className={cx(
-        "grid h-full min-h-[5.75rem] w-14 place-items-center rounded-lg border text-zinc-700 shadow-sm transition sm:w-16",
+        "grid h-full min-h-[5.25rem] w-12 place-items-center rounded-lg border text-zinc-700 shadow-sm transition sm:min-h-[5.75rem] sm:w-16",
         listening
           ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] ring-4 ring-[var(--accent-soft)]"
           : "border-zinc-200 bg-white hover:border-[var(--accent)] hover:text-[var(--accent-strong)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100",
@@ -5130,7 +5169,7 @@ function Button({ children, onClick, variant = "primary", disabled = false }) {
       onClick={onClick}
       disabled={disabled}
       className={cx(
-        "flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-bold shadow-sm transition",
+        "flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-bold shadow-sm transition sm:px-4 sm:py-3 sm:text-sm",
         variant === "primary"
           ? "bg-[var(--accent-strong)] text-white hover:opacity-90"
           : "border border-zinc-200 bg-white text-zinc-900 hover:border-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100",
@@ -5182,11 +5221,11 @@ function ActionButton({ icon: Icon, title, description, tone = "green", onClick,
         palette.shell,
       )}
     >
-      <span className={cx("grid h-11 w-11 shrink-0 place-items-center rounded-full border sm:h-12 sm:w-12", palette.icon)}>
-        <Icon size={21} />
+      <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-full border sm:h-12 sm:w-12", palette.icon)}>
+        <Icon size={20} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-black text-zinc-950 dark:text-white sm:text-base">{title}</span>
+        <span className="block truncate text-xs font-black text-zinc-950 dark:text-white sm:text-base">{title}</span>
         <span className="mt-0.5 block truncate text-xs font-semibold text-zinc-500 dark:text-zinc-400">{description}</span>
       </span>
       <ChevronRight className={cx("shrink-0 transition group-hover:translate-x-0.5", open && "rotate-90", palette.arrow)} size={23} />
@@ -5288,7 +5327,7 @@ function Row({ left, right, className, compact = false }) {
   );
 }
 
-function CompactUpcomingRow({ item, currency, onRecordRecurring, onToggleRecurring, onEditRecurring, recurringEditing = false, onDeleteRecurring, onEditPending, pendingEditing = false, onDeletePending }) {
+function CompactUpcomingRow({ item, currency, onToggleRecurring, onEditRecurring, recurringEditing = false, onDeleteRecurring, onEditPending, pendingEditing = false, onDeletePending }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/70">
       <div className="flex items-start justify-between gap-3">
@@ -5321,11 +5360,8 @@ function CompactUpcomingRow({ item, currency, onRecordRecurring, onToggleRecurri
       <div className="mt-2 flex justify-end gap-1.5">
         {item.source === "recurring" ? (
           <>
-            <TinyIconButton label={item.kind === "income" ? "Received" : "Paid"} onClick={item.active === false ? undefined : onRecordRecurring}>
-              <CheckCircle2 size={14} />
-            </TinyIconButton>
-            <TinyIconButton label={item.active ? "Pause" : "Resume"} onClick={onToggleRecurring}>
-              <PauseCircle size={14} />
+            <TinyIconButton active={item.active === false} label={item.active ? "Pause recurring item" : "Resume recurring item"} onClick={onToggleRecurring}>
+              {item.active ? <PauseCircle size={14} /> : <PlayCircle size={14} />}
             </TinyIconButton>
             <TinyIconButton active={recurringEditing} label={recurringEditing ? "Cancel edit" : "Edit recurring item"} onClick={onEditRecurring}>
               <Pencil size={14} />

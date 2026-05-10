@@ -32,6 +32,17 @@ body {
   overflow-x: hidden;
 }
 
+@keyframes aiButtonPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 34%, transparent);
+  }
+}
+
 button,
 input,
 select {
