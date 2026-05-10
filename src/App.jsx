@@ -1657,10 +1657,30 @@ function normalizeAiFrequency(parsed) {
   return "Monthly";
 }
 
-function aiWarnings(parsed) {
-  return Array.isArray(parsed?.warnings) ? parsed.warnings.filter(Boolean) : [];
+function hasValidAiAmount(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0;
 }
 
+function aiWarnings(parsed) {
+  const warnings = Array.isArray(parsed?.warnings) ? parsed.warnings.filter(Boolean) : [];
+
+  if (!hasValidAiAmount(parsed?.amount)) return warnings;
+
+  const amountWarningPhrases = [
+    "amount unclear",
+    "amount missing",
+    "amount was missing",
+    "price not provided",
+    "no amount provided",
+    "unable to determine amount",
+  ];
+
+  return warnings.filter((warning) => {
+    const text = String(warning).toLowerCase();
+    return !amountWarningPhrases.some((phrase) => text.includes(phrase));
+  });
+}
 function aiConfidence(parsed) {
   return Number(parsed?.confidence || 0);
 }
@@ -2629,7 +2649,7 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
   const missingRequiredFields = (parsed) => {
     const transactionType = normalizeAiType(parsed);
     const missing = [];
-    if (!parsed?.amount) missing.push("amount");
+    if (!hasValidAiAmount(parsed?.amount)) missing.push("amount");
     if (!parsed?.date) missing.push("date");
     if ((transactionType === "expense" || transactionType === "income") && !parsed?.category) missing.push("category");
     if (transactionType.startsWith("saving") && !accountIdByName(data.savingGoals, parsed?.accountName || parsed?.title)) missing.push("account");

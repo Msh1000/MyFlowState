@@ -60,8 +60,26 @@ function extractJson(text) {
 }
 
 function validateParseResult(raw, request) {
-  const warnings = asWarnings(raw?.warnings);
-  const amount = Number(raw?.amount);
+const amount = Number(raw?.amount);
+const amountIsValid = Number.isFinite(amount) && amount > 0;
+let warnings = asWarnings(raw?.warnings);
+
+if (amountIsValid) {
+  const amountWarningPhrases = [
+    "amount unclear",
+    "amount missing",
+    "amount was missing",
+    "price not provided",
+    "no amount provided",
+    "unable to determine amount",
+    "amount could not be parsed",
+  ];
+
+  warnings = warnings.filter((warning) => {
+    const text = String(warning).toLowerCase();
+    return !amountWarningPhrases.some((phrase) => text.includes(phrase));
+  });
+}
   const rawType = asString(raw?.actionType || raw?.transactionType);
   const actionType = ACTION_TYPES.has(rawType) ? rawType : "expense";
   const needsAmount = !["saving_goal", "investment_account"].includes(actionType) ||
@@ -201,7 +219,7 @@ Rules:
 - Return at most ${MAX_PARSED_ACTIONS} actions.
 - If the prompt contains more than ${MAX_PARSED_ACTIONS} actions, parse only the first
   ${MAX_PARSED_ACTIONS} and add this warning exactly:
-  "Only the first 5 AI forms were created."
+  "Only the first 5 AI transactions were created."
 - If date is missing, use today: ${request.today}.
 - For saving_goal actions, date means the deposit date. goalDate means the
   target date. Keep them separate.
@@ -227,6 +245,13 @@ Rules:
 - Put the matched saving goal or investment name in accountName.
 - If amount is missing or unclear, set amount to 0, confidence below 0.5,
   and add a warning.
+  - If a valid numeric amount is parsed, do not add any amount unclear or amount missing warning.
+- South African currency terms like rand, rands, ZAR, and R indicate valid amounts.
+- Examples:
+  "I bought food for 50 rand" means amount 50.
+  "Spent R349.99 on groceries" means amount 349.99.
+  "Got paid 25000 today" means amount 25000.
+  
 - Use ISO date format YYYY-MM-DD.
 - actionType must be one of:
   income, expense, saving_goal, saving_deposit, saving_withdrawal,
