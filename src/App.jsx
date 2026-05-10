@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+} from "firebase/auth";
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Wallet,
   TrendingUp,
@@ -25,6 +32,8 @@ import {
   Sparkles,
   ChevronRight,
   Grid2X2,
+  Mail,
+  X,
 } from "lucide-react";
 import {
   LineChart,
@@ -44,7 +53,7 @@ import { auth, db, googleProvider } from "./firebase";
 
 const STORAGE_KEY = "budgetflow_web_v1";
 const AI_AUTO_CONFIRM_KEY = "budgetflow_ai_auto_confirm";
-const AI_PROMPT_LIMIT = 300;
+const AI_PROMPT_LIMIT = 150;
 const CLOUD_DATA_VERSION = "1";
 const CLOUD_SYNC_KEYS = [
   "settings",
@@ -841,7 +850,7 @@ function mergeById(...groups) {
   return [...map.values()];
 }
 
-function pruneOldTransactions(data, monthsToKeep = 3) {
+function pruneOldTransactions(data, monthsToKeep = 6) {
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - monthsToKeep);
   const cutoffDate = formatDate(cutoff);
@@ -951,8 +960,14 @@ function friendlyFirebaseAuthError(error) {
   }
   if (code === "auth/popup-blocked") return "Login failed: the Google popup was blocked. Please allow popups for this app and try again.";
   if (code === "auth/popup-closed-by-user") return "Login cancelled before Google sign-in finished.";
-  if (code === "auth/operation-not-allowed") return "Login failed: Google sign-in is not enabled in Firebase Authentication.";
+  if (code === "auth/operation-not-allowed") return "Login failed: this sign-in method is not enabled in Firebase Authentication.";
   if (code === "auth/network-request-failed") return "Login failed: please check your internet connection and try again.";
+  if (code === "auth/invalid-email") return "Please enter a valid email address.";
+  if (code === "auth/invalid-credential" || code === "auth/wrong-password") return "Email or password was not recognized.";
+  if (code === "auth/user-not-found") return "No account was found for that email.";
+  if (code === "auth/email-already-in-use") return "An account already exists for that email.";
+  if (code === "auth/weak-password") return "Password must be at least 6 characters.";
+  if (code === "auth/too-many-requests") return "Too many attempts. Please wait a moment and try again.";
   return "Login failed. Please try again.";
 }
 
@@ -1068,14 +1083,14 @@ function Shell({ data, update, tab, setTab, children }) {
     const touch = event.changedTouches[0];
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) < 72 || Math.abs(deltaX) < Math.abs(deltaY) * 1.3) return;
+    if (Math.abs(deltaX) < 46 || Math.abs(deltaX) < Math.abs(deltaY) * 1.15) return;
     switchTabBySwipe(deltaX < 0 ? 1 : -1);
   };
 
   return (
     <div
       className="min-h-screen overflow-x-hidden bg-[#f7f8fb] text-zinc-950 dark:bg-[#05050b] dark:text-zinc-50"
-      style={getPaletteVars(data.settings.palette, isDark)}
+      style={{ ...getPaletteVars(data.settings.palette, isDark), touchAction: "pan-y" }}
       onTouchStart={startSwipe}
       onTouchEnd={endSwipe}
     >
@@ -1278,11 +1293,16 @@ function Dashboard({ data, update, syncUser }) {
           <button
             type="button"
             onClick={() => setAiOpen((open) => !open)}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-violet-200 bg-violet-50 text-violet-700 shadow-sm transition hover:border-violet-400 hover:bg-violet-100 dark:border-violet-900/70 dark:bg-violet-950/40 dark:text-violet-200"
+            className={cx(
+              "relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border text-violet-700 shadow-sm transition before:absolute before:inset-1 before:rounded-md before:bg-violet-300/25 before:opacity-0 before:blur-md before:transition after:absolute after:right-1.5 after:top-1.5 after:h-1 after:w-1 after:rounded-full after:bg-white after:opacity-70 hover:border-violet-400 hover:bg-violet-100 hover:before:opacity-100 dark:text-violet-200",
+              aiOpen
+                ? "border-violet-500 bg-violet-600 text-white shadow-[0_0_24px_rgba(124,58,237,0.42)] before:opacity-100 dark:border-violet-400 dark:bg-violet-500"
+                : "border-violet-200 bg-violet-50 dark:border-violet-900/70 dark:bg-violet-950/40",
+            )}
             aria-label="Add with AI"
             title="Add with AI"
           >
-            <Sparkles size={18} />
+            <Sparkles className={cx("relative z-10 transition", aiOpen && "scale-110")} size={18} />
           </button>
           <select
             value={selectedCycleId}
@@ -1597,10 +1617,14 @@ function snapToForm(ref, setHighlight) {
 }
 
 function normalizeAiType(parsed) {
-  const raw = String(parsed?.transactionType || parsed?.type || parsed?.kind || "").toLowerCase();
+  const raw = String(parsed?.actionType || parsed?.transactionType || parsed?.type || parsed?.kind || "").toLowerCase();
+  if (raw === "saving_goal") return "saving_goal";
+  if (raw === "investment_account") return "investment_account";
   if (raw.includes("saving") && raw.includes("withdraw")) return "saving_withdrawal";
+  if (raw.includes("goal")) return "saving_goal";
   if (raw.includes("saving")) return "saving_deposit";
   if (raw.includes("investment") && raw.includes("withdraw")) return "investment_withdrawal";
+  if (raw.includes("investment") && raw.includes("account")) return "investment_account";
   if (raw.includes("investment")) return "investment_contribution";
   if (raw.includes("income")) return "income";
   if (raw.includes("expense")) return "expense";
@@ -1628,26 +1652,37 @@ function aiUsageDocId() {
 }
 
 function normalizeAiParseResponse(result) {
-  const transactions = Array.isArray(result?.transactions) ? result.transactions : [result].filter(Boolean);
+  const actions = Array.isArray(result?.actions) ?
+    result.actions :
+    Array.isArray(result?.transactions) ? result.transactions : [result].filter(Boolean);
   return {
-    transactions: transactions.slice(0, 5),
-    overallConfidence: Number(result?.overallConfidence ?? transactions[0]?.confidence ?? 0),
+    actions: actions.slice(0, 5),
+    transactions: actions.slice(0, 5),
+    overallConfidence: Number(result?.overallConfidence ?? actions[0]?.confidence ?? 0),
     warnings: Array.isArray(result?.warnings) ? result.warnings.filter(Boolean) : [],
     usage: result?.usage || null,
   };
 }
 
 function aiReviewItem(parsed) {
+  const actionType = parsed?.actionType || parsed?.transactionType;
   return {
     id: uid(),
     selected: true,
     parsed: {
-      transactionType: normalizeAiType(parsed) || "expense",
-      title: parsed?.title || "",
+      actionType: actionType || "expense",
+      transactionType: normalizeAiType({ ...parsed, transactionType: actionType }) || "expense",
+      title: parsed?.title || parsed?.name || "",
+      name: parsed?.name || parsed?.title || "",
       amount: parsed?.amount || "",
       date: parsed?.date || today(),
       category: parsed?.category || "",
+      type: parsed?.type || parsed?.category || "",
       accountName: parsed?.accountName || "",
+      goalName: parsed?.goalName || parsed?.accountName || "",
+      investmentName: parsed?.investmentName || parsed?.accountName || "",
+      goalAmount: parsed?.goalAmount || "",
+      goalDate: parsed?.goalDate || "",
       isRecurring: Boolean(parsed?.isRecurring),
       frequency: parsed?.frequency || "none",
       notes: parsed?.notes || "",
@@ -1661,7 +1696,13 @@ function aiReviewItem(parsed) {
 
 function hasRequiredAiFields(parsed, data) {
   const transactionType = resolveAiTransactionType(parsed, data);
-  if (!parsed?.amount || !parsed?.date || !parsed?.title) return false;
+  if (transactionType === "saving_goal") {
+    return Boolean((parsed?.name || parsed?.title || "").trim() && parsed?.goalAmount && parsed?.goalDate);
+  }
+  if (transactionType === "investment_account") {
+    return Boolean((parsed?.name || parsed?.title || parsed?.investmentName || "").trim());
+  }
+  if (!parsed?.amount || !parsed?.date || !(parsed?.title || parsed?.name)) return false;
   if ((transactionType === "expense" || transactionType === "income") && !parsed?.category) return false;
   if (transactionType.startsWith("saving")) return Boolean(findAccountMatch(data.savingGoals, parsed.accountName || parsed.title || parsed.category));
   if (transactionType.startsWith("investment")) return Boolean(findAccountMatch(data.investments, parsed.accountName || parsed.title || parsed.category));
@@ -1687,9 +1728,10 @@ function accountIdByName(items, accountName) {
 
 function resolveAiTransactionType(parsed, data) {
   const transactionType = normalizeAiType(parsed) || "expense";
+  if (transactionType === "saving_goal" || transactionType === "investment_account") return transactionType;
   if (transactionType.startsWith("saving") || transactionType.startsWith("investment")) return transactionType;
 
-  const text = [parsed?.accountName, parsed?.title, parsed?.category, parsed?.notes].join(" ");
+  const text = [parsed?.accountName, parsed?.goalName, parsed?.investmentName, parsed?.title, parsed?.name, parsed?.category, parsed?.notes].join(" ");
   const isWithdrawal = /\b(withdraw|withdrew|take out|transfer out|remove)\b/i.test(text);
   if (findAccountMatch(data.savingGoals, text)) return isWithdrawal ? "saving_withdrawal" : "saving_deposit";
   if (findAccountMatch(data.investments, text)) return isWithdrawal ? "investment_withdrawal" : "investment_contribution";
@@ -1697,8 +1739,29 @@ function resolveAiTransactionType(parsed, data) {
 }
 
 function resolveAiLedgerLock(parsed, data) {
-  const text = [parsed?.accountName, parsed?.title, parsed?.category, parsed?.notes].join(" ");
+  const text = [parsed?.accountName, parsed?.goalName, parsed?.investmentName, parsed?.title, parsed?.name, parsed?.category, parsed?.notes].join(" ");
   const transactionType = resolveAiTransactionType(parsed, data);
+
+  if (transactionType === "saving_goal") {
+    const name = parsed?.name || parsed?.goalName || parsed?.title || "";
+    return {
+      locked: false,
+      accountName: name,
+      transactionType,
+      kind: "saving",
+    };
+  }
+
+  if (transactionType === "investment_account") {
+    const name = parsed?.name || parsed?.investmentName || parsed?.title || "";
+    return {
+      locked: false,
+      accountName: name,
+      transactionType,
+      kind: "investment",
+    };
+  }
+
   const savingGoal = findAccountMatch(data.savingGoals, text);
   const investment = findAccountMatch(data.investments, text);
 
@@ -1753,9 +1816,14 @@ function AiAddPanel({ data, update, syncUser }) {
 
     return onSnapshot(doc(db, "users", syncUser.uid, "aiUsage", aiUsageDocId()), (snapshot) => {
       const count = Number(snapshot.data()?.count || 0);
+      const snapshotData = snapshot.data() || {};
+      const formsCreated = Number(snapshotData.formsCreated || snapshotData.count || 0);
+      const promptsSent = Number(snapshotData.promptsSent || 0);
       setAiUsage({
-        count,
-        remaining: Math.max(0, 30 - count),
+        count: formsCreated,
+        formsCreated,
+        promptsSent,
+        remaining: Math.max(0, 30 - formsCreated),
         limit: 30,
         bypass: false,
       });
@@ -1792,6 +1860,73 @@ function AiAddPanel({ data, update, syncUser }) {
     const status = getTransactionStatus(date);
     const createdAt = new Date().toISOString();
     update((draft) => {
+      if (transactionType === "saving_goal") {
+        const name = (parsed.name || parsed.title || parsed.goalName || "Saving goal").trim();
+        let goal = findAccountMatch(draft.savingGoals, name);
+        if (!goal) {
+          goal = {
+            id: uid(),
+            name,
+            goalAmount: parseAmount(parsed.goalAmount || parsed.amount),
+            goalDate: parsed.goalDate || date,
+            openingBalance: 0,
+            currentBalance: 0,
+            notes: "",
+            createdAt,
+          };
+          draft.savingGoals.push(goal);
+        }
+        if (amount > 0) {
+          draft.savingTransactions.push({
+            id: uid(),
+            savingGoalId: goal.id,
+            type: "deposit",
+            amount,
+            date,
+            comment: "",
+            status,
+            appliedAt: appliedAtFor(status, date),
+            createdAt,
+          });
+          if (status === "applied") goal.currentBalance = Math.max(0, Number(goal.currentBalance || 0) + amount);
+        }
+        return draft;
+      }
+
+      if (transactionType === "investment_account") {
+        const name = (parsed.name || parsed.title || parsed.investmentName || "Investment").trim();
+        let investment = findAccountMatch(draft.investments, name);
+        if (!investment) {
+          investment = {
+            id: uid(),
+            name,
+            type: parsed.type || parsed.category || "Other",
+            currentBalance: 0,
+            monthlyContribution: 0,
+            annualReturn: 0,
+            notes: "",
+            createdAt,
+          };
+          draft.investments.push(investment);
+        }
+        if (amount > 0) {
+          draft.investmentTransactions.push({
+            id: uid(),
+            investmentId: investment.id,
+            type: "contribution",
+            amount,
+            date,
+            comment: "",
+            status,
+            appliedAt: appliedAtFor(status, date),
+            affectsCash: true,
+            createdAt,
+          });
+          if (status === "applied") investment.currentBalance = Math.max(0, Number(investment.currentBalance || 0) + amount);
+        }
+        return draft;
+      }
+
       if (parsed.isRecurring && (transactionType === "income" || transactionType === "expense")) {
         const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
         draft.recurring.push({
@@ -1804,18 +1939,18 @@ function AiAddPanel({ data, update, syncUser }) {
           startDate: date,
           frequency: normalizeAiFrequency(parsed),
           customDays: 30,
-          notes: parsed.notes || "",
+          notes: "",
           active: true,
           createdAt,
         });
         return draft;
       }
       if (transactionType === "income") {
-        draft.incomes.push({ id: uid(), name: parsed.title || parsed.category || "Income", amount, date, type: parsed.category || "Salary", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+        draft.incomes.push({ id: uid(), name: parsed.title || parsed.category || "Income", amount, date, type: parsed.category || "Salary", notes: "", status, appliedAt: appliedAtFor(status, date), createdAt });
       }
       if (transactionType === "expense") {
         const category = data.categories.includes(parsed.category) ? parsed.category : data.categories[0] || "Groceries";
-        draft.expenses.push({ id: uid(), title: parsed.title || category, amount, date, category, paymentMethod: "Card", notes: parsed.notes || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+        draft.expenses.push({ id: uid(), title: parsed.title || category, amount, date, category, paymentMethod: "Card", notes: "", status, appliedAt: appliedAtFor(status, date), createdAt });
       }
       if (transactionType === "saving_deposit" || transactionType === "saving_withdrawal") {
         const accountText = [parsed.accountName, parsed.title, parsed.category, parsed.notes].join(" ");
@@ -1829,13 +1964,13 @@ function AiAddPanel({ data, update, syncUser }) {
             goalDate: formatDate(new Date(new Date().getFullYear() + 1, new Date().getMonth(), new Date().getDate())),
             openingBalance: 0,
             currentBalance: 0,
-            notes: "Created from AI",
+            notes: "",
             createdAt,
           };
           draft.savingGoals.push(goal);
         }
         const type = transactionType === "saving_withdrawal" ? "withdrawal" : "deposit";
-        draft.savingTransactions.push({ id: uid(), savingGoalId: goal.id, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), createdAt });
+        draft.savingTransactions.push({ id: uid(), savingGoalId: goal.id, type, amount, date, comment: "", status, appliedAt: appliedAtFor(status, date), createdAt });
         if (goal && status === "applied") goal.currentBalance = Math.max(0, Number(goal.currentBalance || 0) + movementDelta(type, amount));
       }
       if (transactionType === "investment_contribution" || transactionType === "investment_withdrawal") {
@@ -1850,13 +1985,13 @@ function AiAddPanel({ data, update, syncUser }) {
             currentBalance: 0,
             monthlyContribution: 0,
             annualReturn: 0,
-            notes: "Created from AI",
+            notes: "",
             createdAt,
           };
           draft.investments.push(investment);
         }
         const type = transactionType === "investment_withdrawal" ? "withdrawal" : "contribution";
-        draft.investmentTransactions.push({ id: uid(), investmentId: investment.id, type, amount, date, comment: parsed.notes || parsed.title || "", status, appliedAt: appliedAtFor(status, date), affectsCash: true, createdAt });
+        draft.investmentTransactions.push({ id: uid(), investmentId: investment.id, type, amount, date, comment: "", status, appliedAt: appliedAtFor(status, date), affectsCash: true, createdAt });
         if (investment && status === "applied") investment.currentBalance = Math.max(0, Number(investment.currentBalance || 0) + contributionDelta(type, amount));
       }
       return draft;
@@ -1890,7 +2025,7 @@ function AiAddPanel({ data, update, syncUser }) {
         savingGoals: data.savingGoals.map((item) => item.name),
         investments: data.investments.map((item) => item.name),
       }));
-      const reviewItems = response.transactions.map(makeReviewItem);
+      const reviewItems = response.actions.map(makeReviewItem);
       const safeItems = reviewItems.filter((item) =>
         aiConfidence(item.parsed) >= 0.85 &&
         !aiWarnings(item.parsed).length &&
@@ -1942,6 +2077,10 @@ function AiAddPanel({ data, update, syncUser }) {
   const confirmCurrentAiItem = () => {
     const current = aiReviewItems[0];
     if (!current) return;
+    if (!hasRequiredAiFields(current.parsed, data)) {
+      setAiStatus("Please complete the required AI fields before adding.");
+      return;
+    }
     saveParsedResult(current.parsed);
     setAiReviewItems((items) => items.slice(1));
     setAiStatus(aiReviewItems.length > 1 ? "Transaction saved. Review the next one." : "Transaction saved.");
@@ -1959,7 +2098,7 @@ function AiAddPanel({ data, update, syncUser }) {
       <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center">
         <span>{syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}</span>
         <span className="rounded-md bg-white px-2 py-1 text-xs font-black text-[var(--accent-strong)] dark:bg-zinc-950">
-          {aiUsage.bypass ? "Developer bypass" : `${aiUsage.count} used / ${aiUsage.remaining} left`}
+          {aiUsage.bypass ? "Developer bypass" : `${aiUsage.formsCreated ?? aiUsage.count} forms used / ${aiUsage.remaining} left`}
         </span>
       </div>
       <label className="block">
@@ -1986,7 +2125,7 @@ function AiAddPanel({ data, update, syncUser }) {
           aria-pressed={aiAutoConfirm}
           className={cx("h-7 w-12 rounded-full p-1 transition", aiAutoConfirm ? "bg-[var(--accent-strong)]" : "bg-zinc-200 dark:bg-zinc-800")}
           onClick={() => {
-            if (!aiAutoConfirm && !window.confirm("Auto-confirm will save high-confidence AI transactions without manual review. Continue?")) return;
+            if (!aiAutoConfirm && !window.confirm("AI generated transactions will automatically be added without confirmation. Warning AI may be inaccurate.")) return;
             setAiAutoConfirm(!aiAutoConfirm);
           }}
         >
@@ -2027,21 +2166,29 @@ function AiAddPanel({ data, update, syncUser }) {
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Select
-                    label="Type"
-                    value={parsed.transactionType}
-                    options={parsed.lockedLedger ? [parsed.transactionType] : ["income", "expense", "saving_deposit", "saving_withdrawal", "investment_contribution", "investment_withdrawal"]}
-                    onChange={(value) => updateAiReviewItem(item.id, { transactionType: value })}
+                    label="Action"
+                    value={parsed.actionType || parsed.transactionType}
+                    options={parsed.lockedLedger ? [parsed.actionType || parsed.transactionType] : ["income", "expense", "saving_goal", "saving_deposit", "saving_withdrawal", "investment_account", "investment_contribution", "investment_withdrawal"]}
+                    onChange={(value) => updateAiReviewItem(item.id, { actionType: value, transactionType: value })}
                     disabled={parsed.lockedLedger}
                   />
-                  <Input label="Title" value={parsed.title} onChange={(value) => updateAiReviewItem(item.id, { title: value })} />
-                  <AmountInput label="Amount" value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />
-                  <DateInput label="Date" value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
-                  <Input
-                    label={parsed.ledgerKind === "investment" ? "Investment account" : parsed.ledgerKind === "saving" ? "Saving goal" : "Category / account"}
-                    value={parsed.accountName || parsed.category}
-                    onChange={(value) => updateAiReviewItem(item.id, { category: value, accountName: value })}
-                    disabled={parsed.lockedLedger}
-                  />
+                  <Input label={parsed.transactionType === "saving_goal" || parsed.transactionType === "investment_account" ? "Name" : "Title"} value={parsed.name || parsed.title} onChange={(value) => updateAiReviewItem(item.id, { title: value, name: value })} />
+                  {(parsed.transactionType !== "investment_account" || parsed.amount) && <AmountInput label={parsed.transactionType === "saving_goal" ? "Deposit amount" : "Amount"} value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />}
+                  <DateInput label={parsed.transactionType === "saving_goal" ? "Deposit date" : "Date"} value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
+                  {parsed.transactionType === "saving_goal" && (
+                    <>
+                      <AmountInput label="Goal amount" value={String(parsed.goalAmount)} onChange={(value) => updateAiReviewItem(item.id, { goalAmount: value })} />
+                      <DateInput label="Goal date" value={parsed.goalDate || parsed.date} onChange={(value) => updateAiReviewItem(item.id, { goalDate: value })} />
+                    </>
+                  )}
+                  {parsed.transactionType !== "saving_goal" && parsed.transactionType !== "investment_account" && (
+                    <Input
+                      label={parsed.ledgerKind === "investment" ? "Investment name" : parsed.ledgerKind === "saving" ? "Goal name" : "Category"}
+                      value={parsed.accountName || parsed.goalName || parsed.investmentName || parsed.category}
+                      onChange={(value) => updateAiReviewItem(item.id, { category: value, accountName: value, goalName: value, investmentName: value })}
+                      disabled={parsed.lockedLedger}
+                    />
+                  )}
                   <Select label="Frequency" value={parsed.frequency || "none"} options={["none", "weekly", "monthly", "yearly"]} onChange={(value) => updateAiReviewItem(item.id, { frequency: value, isRecurring: value !== "none" })} />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -2768,8 +2915,8 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
                         <div className="grid gap-2 sm:grid-cols-2">
                           <Select label="Type" value={parsed.transactionType} options={["income", "expense", "saving_deposit", "saving_withdrawal", "investment_contribution", "investment_withdrawal"]} onChange={(value) => updateAiReviewItem(item.id, { transactionType: value })} />
                           <Input label="Title" value={parsed.title} onChange={(value) => updateAiReviewItem(item.id, { title: value })} />
-                          <AmountInput label="Amount" value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />
-                          <DateInput label="Date" value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
+          <AmountInput label="Amount" value={String(parsed.amount)} onChange={(value) => updateAiReviewItem(item.id, { amount: value })} />
+          <DateInput label="Date" value={parsed.date} onChange={(value) => updateAiReviewItem(item.id, { date: value })} />
                           <Input label="Category / account" value={parsed.accountName || parsed.category} onChange={(value) => updateAiReviewItem(item.id, { category: value, accountName: value })} />
                           <Select label="Frequency" value={parsed.frequency || "none"} options={["none", "weekly", "monthly", "yearly"]} onChange={(value) => updateAiReviewItem(item.id, { frequency: value, isRecurring: value !== "none" })} />
                         </div>
@@ -3986,6 +4133,11 @@ function SettingsScreen({ data, update, setData, syncUser }) {
   const [importError, setImportError] = useState("");
   const [syncStatus, setSyncStatus] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailAuthEmail, setEmailAuthEmail] = useState("");
+  const [emailAuthPassword, setEmailAuthPassword] = useState("");
+  const [emailAuthMessage, setEmailAuthMessage] = useState("");
+  const [emailAuthSuccess, setEmailAuthSuccess] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showAllCategories, setShowAllCategories] = useState(false);
@@ -4110,6 +4262,94 @@ function SettingsScreen({ data, update, setData, syncUser }) {
     setCategoryName("");
   };
 
+  const clearEmailPassword = () => setEmailAuthPassword("");
+
+  const closeEmailModal = () => {
+    setEmailModalOpen(false);
+    setEmailAuthMessage("");
+    setEmailAuthSuccess("");
+    clearEmailPassword();
+  };
+
+  const handleAuthenticatedUser = async (user, successText = "Signed in.") => {
+    const backup = await readCloudBackup(user.uid);
+    if (backup) {
+      if (confirm("Cloud backup found. Load it?")) {
+        setData(backup);
+        setSyncStatus("Load successful.");
+      } else {
+        setSyncStatus("Signed in. Cloud backup was left unchanged.");
+      }
+    } else if (confirm("No cloud backup found. Save current local data to cloud?")) {
+      await writeCloudBackup(user.uid, currentDataRef.current);
+      setSyncStatus("Save successful.");
+    } else {
+      setSyncStatus(successText);
+    }
+  };
+
+  const validateEmailAuth = ({ requirePassword = true, creatingAccount = false } = {}) => {
+    const trimmedEmail = emailAuthEmail.trim();
+    if (!trimmedEmail) return "Email is required.";
+    if (requirePassword && !emailAuthPassword) return "Password is required.";
+    if (creatingAccount && emailAuthPassword.length < 6) return "Password must be at least 6 characters.";
+    return "";
+  };
+
+  const runEmailAuth = async (mode) => {
+    const validationMessage = validateEmailAuth({ creatingAccount: mode === "create" });
+    if (validationMessage) {
+      setEmailAuthSuccess("");
+      setEmailAuthMessage(validationMessage);
+      return;
+    }
+
+    setSyncBusy(true);
+    setEmailAuthMessage("");
+    setEmailAuthSuccess("");
+    setSyncStatus(mode === "create" ? "Creating account..." : "Signing in...");
+    try {
+      const email = emailAuthEmail.trim();
+      const result =
+        mode === "create"
+          ? await createUserWithEmailAndPassword(auth, email, emailAuthPassword)
+          : await signInWithEmailAndPassword(auth, email, emailAuthPassword);
+      clearEmailPassword();
+      setEmailModalOpen(false);
+      await handleAuthenticatedUser(result.user, mode === "create" ? "Account created and signed in." : "Signed in.");
+    } catch (error) {
+      setEmailAuthMessage(friendlyFirebaseAuthError(error));
+      setSyncStatus(friendlyFirebaseAuthError(error));
+    } finally {
+      clearEmailPassword();
+      setSyncBusy(false);
+    }
+  };
+
+  const sendEmailPasswordReset = async () => {
+    const validationMessage = validateEmailAuth({ requirePassword: false });
+    if (validationMessage) {
+      setEmailAuthSuccess("");
+      setEmailAuthMessage("Enter your email first.");
+      return;
+    }
+
+    setSyncBusy(true);
+    setEmailAuthMessage("");
+    setEmailAuthSuccess("");
+    try {
+      await sendPasswordResetEmail(auth, emailAuthEmail.trim());
+      setEmailAuthSuccess("Password reset email sent.");
+      setSyncStatus("Password reset email sent.");
+    } catch (error) {
+      const message = friendlyFirebaseAuthError(error);
+      setEmailAuthMessage(message);
+      setSyncStatus(message);
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
   const removeCategory = (category) => {
     if (defaultCategories.includes(category)) return;
     update((draft) => {
@@ -4124,20 +4364,7 @@ function SettingsScreen({ data, update, setData, syncUser }) {
     setSyncStatus("Signing in...");
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const backup = await readCloudBackup(result.user.uid);
-      if (backup) {
-        if (confirm("Cloud backup found. Load it?")) {
-          setData(backup);
-          setSyncStatus("Load successful.");
-        } else {
-          setSyncStatus("Signed in. Cloud backup was left unchanged.");
-        }
-      } else if (confirm("No cloud backup found. Save current local data to cloud?")) {
-        await writeCloudBackup(result.user.uid, currentDataRef.current);
-        setSyncStatus("Save successful.");
-      } else {
-        setSyncStatus("Signed in. No cloud backup found.");
-      }
+      await handleAuthenticatedUser(result.user, "Signed in. No cloud backup found.");
     } catch (error) {
       console.error(error);
       setSyncStatus(friendlyFirebaseAuthError(error));
@@ -4320,12 +4547,20 @@ function SettingsScreen({ data, update, setData, syncUser }) {
 
       <Panel title="Cloud Sync">
         <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-          {syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Sign in to save and load your budget across devices."}
+          {syncUser ? `Signed in as ${syncUser.email || syncUser.displayName}` : "Sign in to save and load your budget across devices."}
         </div>
         {!syncUser ? (
-          <Button onClick={signInWithGoogle} disabled={syncBusy}>
-            Sign in with Google
-          </Button>
+          <>
+            <Button onClick={signInWithGoogle} disabled={syncBusy}>
+              Sign in with Google
+            </Button>
+            <Button onClick={() => setEmailModalOpen(true)} disabled={syncBusy} variant="secondary">
+              <Mail size={16} /> Sign in with Email
+            </Button>
+            <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+              Email sign-in is available as a fallback when Google sign-in is not supported by your browser or app.
+            </p>
+          </>
         ) : (
           <div className="grid min-w-0 gap-3 sm:grid-cols-3">
             <Button onClick={saveToCloud} disabled={syncBusy}>
@@ -4342,18 +4577,41 @@ function SettingsScreen({ data, update, setData, syncUser }) {
         {syncStatus && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{syncStatus}</p>}
       </Panel>
 
-      <Panel title="Backup and data">
+      <EmailSignInModal
+        email={emailAuthEmail}
+        error={emailAuthMessage}
+        loading={syncBusy}
+        onCancel={closeEmailModal}
+        onCreateAccount={() => runEmailAuth("create")}
+        onEmailChange={(value) => {
+          setEmailAuthEmail(value);
+          setEmailAuthMessage("");
+          setEmailAuthSuccess("");
+        }}
+        onForgotPassword={sendEmailPasswordReset}
+        onPasswordChange={(value) => {
+          setEmailAuthPassword(value);
+          setEmailAuthMessage("");
+          setEmailAuthSuccess("");
+        }}
+        onSignIn={() => runEmailAuth("signIn")}
+        open={emailModalOpen}
+        password={emailAuthPassword}
+        success={emailAuthSuccess}
+      />
+
+      <Panel title="Backup">
         <Button onClick={exportJson} variant="secondary">
-          <Download size={16} /> Export JSON backup
+          <Download size={16} /> Backup
         </Button>
         <Button onClick={copyAndShareJson} variant="secondary">
-          <Upload size={16} /> Copy and share JSON backup
+          <Upload size={16} /> Copy backup to clipboard
         </Button>
         <Button onClick={exportCsv} variant="secondary">
-          <Download size={16} /> Export CSV transactions
+          <Download size={16} /> Export transactions to CSV
         </Button>
         <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm font-bold text-zinc-900 transition hover:border-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
-          <Upload size={16} /> Import JSON
+          <Upload size={16} /> Restore backup
           <input
             type="file"
             accept="application/json"
@@ -4371,6 +4629,110 @@ function SettingsScreen({ data, update, setData, syncUser }) {
         </button>
       </Panel>
     </div>
+  );
+}
+
+function EmailSignInModal({
+  email,
+  error,
+  loading,
+  onCancel,
+  onCreateAccount,
+  onEmailChange,
+  onForgotPassword,
+  onPasswordChange,
+  onSignIn,
+  open,
+  password,
+  success,
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/55 px-3 py-3 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-sign-in-title"
+            className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.25)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 id="email-sign-in-title" className="text-lg font-black tracking-tight text-zinc-950 dark:text-zinc-50">
+                  Email Sign In
+                </h2>
+                <p className="mt-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">Use email when Google sign-in is unavailable.</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close email sign in"
+                disabled={loading}
+                onClick={onCancel}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:border-[var(--accent)] hover:text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Email</span>
+                <input
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={email}
+                  disabled={loading}
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Password</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  disabled={loading}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+                />
+              </label>
+
+              {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200">{error}</p>}
+              {success && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200">{success}</p>}
+
+              <div className="grid gap-2 pt-1 sm:grid-cols-2">
+                <Button onClick={onSignIn} disabled={loading}>
+                  Sign In
+                </Button>
+                <Button onClick={onCreateAccount} disabled={loading} variant="secondary">
+                  Create Account
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button onClick={onForgotPassword} disabled={loading} variant="secondary">
+                  Forgot Password
+                </Button>
+                <Button onClick={onCancel} disabled={loading} variant="secondary">
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

@@ -10,12 +10,14 @@ setGlobalOptions({maxInstances: 10});
 const GROQ_MODEL = "llama-3.1-8b-instant";
 const DAILY_AI_LIMIT = 30;
 const AI_COOLDOWN_MS = 2000;
-const MAX_PARSED_TRANSACTIONS = 5;
-const TRANSACTION_TYPES = new Set([
+const MAX_PARSED_ACTIONS = 5;
+const ACTION_TYPES = new Set([
   "income",
   "expense",
+  "saving_goal",
   "saving_deposit",
   "saving_withdrawal",
+  "investment_account",
   "investment_contribution",
   "investment_withdrawal",
 ]);
@@ -60,24 +62,54 @@ function extractJson(text) {
 function validateParseResult(raw, request) {
   const warnings = asWarnings(raw?.warnings);
   const amount = Number(raw?.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  const rawType = asString(raw?.actionType || raw?.transactionType);
+  const actionType = ACTION_TYPES.has(rawType) ? rawType : "expense";
+  const needsAmount = !["saving_goal", "investment_account"].includes(actionType) ||
+    Number.isFinite(amount) && amount > 0;
+
+  if (needsAmount && (!Number.isFinite(amount) || amount <= 0)) {
     warnings.push("Amount was missing or unclear.");
   }
 
-  const transactionType = TRANSACTION_TYPES.has(raw?.transactionType) ?
-    raw.transactionType :
-    "expense";
   const frequency = FREQUENCIES.has(raw?.frequency) ? raw.frequency : "none";
   const category = asString(raw?.category) ||
-    (transactionType === "income" ? "Salary" : request.categories[0] || "Other");
+    (actionType === "income" ? "Salary" : request.categories[0] || "Other");
+  const actionName = asString(raw?.name || raw?.title, "Untitled action").slice(0, 120);
+  const goalName = actionType === "saving_goal" ?
+    actionName :
+    asString(raw?.goalName || raw?.accountName).slice(0, 120);
+  const investmentName = actionType === "investment_account" ?
+    actionName :
+    asString(raw?.investmentName || raw?.accountName).slice(0, 120);
+  const accountName = actionType === "saving_goal" ?
+    actionName :
+    actionType === "investment_account" ?
+      actionName :
+      asString(raw?.accountName).slice(0, 120);
+  const normalizedDate = normalizeDate(raw?.date, request.today);
+  const normalizedGoalDate = normalizeDate(raw?.goalDate, request.today);
+  const actionDate = actionType === "saving_goal" &&
+    Number.isFinite(amount) &&
+    amount > 0 &&
+    normalizedDate === normalizedGoalDate &&
+    normalizedGoalDate !== request.today ?
+    request.today :
+    normalizedDate;
 
   return {
-    transactionType,
-    title: asString(raw?.title, "Untitled transaction").slice(0, 120),
+    actionType,
+    transactionType: actionType,
+    title: actionName,
+    name: actionName,
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
-    date: normalizeDate(raw?.date, request.today),
+    date: actionDate,
     category: category.slice(0, 80),
-    accountName: asString(raw?.accountName).slice(0, 120),
+    type: asString(raw?.type || raw?.category).slice(0, 80),
+    accountName,
+    goalName,
+    investmentName,
+    goalAmount: Number(raw?.goalAmount) > 0 ? Number(raw.goalAmount) : 0,
+    goalDate: normalizedGoalDate,
     isRecurring: Boolean(raw?.isRecurring),
     frequency,
     notes: asString(raw?.notes).slice(0, 500),
@@ -92,29 +124,31 @@ function parseAndValidateJson(text, request) {
     throw new Error("Parsed response was not an object.");
   }
 
-  const rawTransactions = Array.isArray(raw.transactions) ?
-    raw.transactions :
+  const rawActions = Array.isArray(raw.actions) ?
+    raw.actions :
+    Array.isArray(raw.transactions) ? raw.transactions :
     [raw];
-  if (!rawTransactions.length) {
-    throw new Error("Parsed response did not include transactions.");
+  if (!rawActions.length) {
+    throw new Error("Parsed response did not include actions.");
   }
 
-  const limitedTransactions = rawTransactions
-    .slice(0, MAX_PARSED_TRANSACTIONS)
+  const limitedActions = rawActions
+    .slice(0, MAX_PARSED_ACTIONS)
     .map((item) => validateParseResult(item, request));
   const warnings = asWarnings(raw.warnings);
 
-  if (rawTransactions.length > MAX_PARSED_TRANSACTIONS) {
-    warnings.push("Only the first 5 transactions were created.");
+  if (rawActions.length > MAX_PARSED_ACTIONS) {
+    warnings.push("Only the first 5 AI forms were created.");
   }
 
-  const averageConfidence = limitedTransactions.reduce(
+  const averageConfidence = limitedActions.reduce(
     (sum, item) => sum + item.confidence,
     0,
-  ) / limitedTransactions.length;
+  ) / limitedActions.length;
 
   return {
-    transactions: limitedTransactions,
+    actions: limitedActions,
+    transactions: limitedActions,
     overallConfidence: Number.isFinite(Number(raw.overallConfidence)) ?
       normalizeConfidence(raw.overallConfidence, warnings) :
       averageConfidence,
@@ -127,7 +161,7 @@ function validateRequest(data) {
   if (!text) {
     throw new HttpsError("invalid-argument", "Please enter a transaction to parse.");
   }
-  if (text.length > 300) {
+  if (text.length > 150) {
     throw new HttpsError(
       "invalid-argument",
       "That transaction is too long. Please shorten it and try again.",
@@ -160,29 +194,43 @@ function buildPrompt(request) {
 
 Rules:
 - Return exactly one JSON object and no markdown.
-- Support one transaction or multiple transactions in the same prompt.
-- Create a separate transaction for each distinct amount/action.
+- Support one action or multiple actions in the same prompt.
+- Create a separate action for each distinct amount/action/form.
 - Do not combine separate purchases, deposits, income payments, or bills into
-  one transaction.
-- Return at most ${MAX_PARSED_TRANSACTIONS} transactions.
-- If the prompt contains more than ${MAX_PARSED_TRANSACTIONS} transactions, parse only the first
-  ${MAX_PARSED_TRANSACTIONS} and add this warning exactly:
-  "Only the first 5 transactions were created."
+  one action.
+- Return at most ${MAX_PARSED_ACTIONS} actions.
+- If the prompt contains more than ${MAX_PARSED_ACTIONS} actions, parse only the first
+  ${MAX_PARSED_ACTIONS} and add this warning exactly:
+  "Only the first 5 AI forms were created."
 - If date is missing, use today: ${request.today}.
+- For saving_goal actions, date means the deposit date. goalDate means the
+  target date. Keep them separate.
+- If a saving_goal prompt includes a target date but no deposit date, set date
+  to today (${request.today}) and set goalDate to the inferred target date.
+- Do not copy goalDate into date unless the prompt explicitly says the deposit
+  happens on that same date.
 - Currency symbol is ${request.currency}.
 - Known expense categories: ${request.categories.join(", ") || "none"}.
 - Known saving goals: ${request.savingGoals.join(", ") || "none"}.
 - Known investments: ${request.investments.join(", ") || "none"}.
 - Savings and investment contributions are not expenses.
-- Money added to a saving goal must be saving_deposit.
-- Money added to an investment must be investment_contribution.
+- Use saving_goal to create a new saving goal. If the prompt also adds money
+  to that new goal, include that amount on the same saving_goal action.
+- If the user says "new goal", "create a goal", or "called X", do not match it
+  to any existing saving goal. Set name, title, accountName, and goalName to
+  the explicit new goal name X.
+- Use investment_account to create a new investment account. If the prompt
+  also adds money to it, include that amount on the same investment_account
+  action.
+- Money added to an existing saving goal must be saving_deposit.
+- Money added to an existing investment must be investment_contribution.
 - Put the matched saving goal or investment name in accountName.
 - If amount is missing or unclear, set amount to 0, confidence below 0.5,
   and add a warning.
 - Use ISO date format YYYY-MM-DD.
-- transactionType must be one of:
-  income, expense, saving_deposit, saving_withdrawal,
-  investment_contribution, investment_withdrawal.
+- actionType must be one of:
+  income, expense, saving_goal, saving_deposit, saving_withdrawal,
+  investment_account, investment_contribution, investment_withdrawal.
 - frequency must be one of: none, weekly, monthly, yearly.
 
 Examples:
@@ -190,19 +238,29 @@ Examples:
   transactions.
 - "Salary R22000 today, Netflix R199 monthly, fuel R500 yesterday" returns
   three transactions.
-- "Add R2000 to TFSA and R1000 to emergency fund" returns two saving or
-  investment transactions based on the account names.
+- "Add R2000 to TFSA and R1000 to emergency fund" returns two actions based
+  on the account names.
+- "Create a new goal called car with a goal amount of 10000 which I want to
+  reach by December and add 5000 to it" returns one saving_goal action with
+  name Car, goalAmount 10000, a reasonable December goalDate, amount 5000,
+  and date ${request.today} unless the deposit date is stated separately.
 
 JSON shape:
 {
-  "transactions": [
+  "actions": [
     {
-      "transactionType": "expense",
+      "actionType": "expense",
       "title": "Fuel",
+      "name": "Fuel",
       "amount": 450,
       "date": "${request.today}",
       "category": "Transport",
+      "type": "Transport",
       "accountName": "",
+      "goalName": "",
+      "investmentName": "",
+      "goalAmount": 0,
+      "goalDate": "${request.today}",
       "isRecurring": false,
       "frequency": "none",
       "notes": "",
@@ -236,7 +294,7 @@ function buildMessages(request, retryContext) {
   return [
     {
       role: "system",
-      content: "Parse personal finance text into strict JSON with a transactions array. " +
+      content: "Parse personal finance text into strict JSON with an actions array. " +
         "Return no markdown.",
     },
     {
@@ -281,36 +339,43 @@ function hasDeveloperBypass(request) {
     listFromEnv("AI_USAGE_BYPASS_EMAILS").includes(email);
 }
 
-function usagePayload(count, lastRequestAt, bypass = false) {
+function usagePayload(data, lastRequestAt, bypass = false) {
+  const formsCreated = Number(data?.formsCreated || data?.count || 0);
+  const promptsSent = Number(data?.promptsSent || 0);
   return {
-    count,
+    count: formsCreated,
+    promptsSent,
+    formsCreated,
+    aiFormsCreatedToday: formsCreated,
+    aiPromptsSentToday: promptsSent,
+    totalAiUsageToday: formsCreated,
     limit: DAILY_AI_LIMIT,
-    remaining: Math.max(0, DAILY_AI_LIMIT - count),
+    remaining: Math.max(0, DAILY_AI_LIMIT - formsCreated),
     lastRequestAt: lastRequestAt?.toDate?.().toISOString?.() || null,
     date: usageDateKey(),
     bypass,
   };
 }
 
-async function acceptAiUsage(request) {
+async function checkAiUsage(request) {
   const uid = request.auth.uid;
   const dateKey = usageDateKey();
   const bypass = hasDeveloperBypass(request);
 
   if (bypass) {
-    return usagePayload(0, null, true);
+    return usagePayload({}, null, true);
   }
 
   const ref = firestore.doc(`users/${uid}/aiUsage/${dateKey}`);
   return firestore.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : {};
-    const count = Number(data.count || 0);
+    const formsCreated = Number(data.formsCreated || data.count || 0);
     const lastRequestAt = data.lastRequestAt;
     const lastMillis = lastRequestAt?.toMillis?.() || 0;
     const nowMillis = Date.now();
 
-    if (count >= DAILY_AI_LIMIT) {
+    if (formsCreated >= DAILY_AI_LIMIT) {
       throw new HttpsError("resource-exhausted", "Daily AI limit reached.");
     }
 
@@ -321,14 +386,44 @@ async function acceptAiUsage(request) {
       );
     }
 
-    const now = timestamp.fromMillis(nowMillis);
+    return usagePayload(data, lastRequestAt);
+  });
+}
+
+async function recordAiUsage(request, formsCreated) {
+  const uid = request.auth.uid;
+  const dateKey = usageDateKey();
+  const bypass = hasDeveloperBypass(request);
+
+  if (bypass) {
+    return usagePayload({}, null, true);
+  }
+
+  const acceptedForms = Math.max(1, Number(formsCreated || 1));
+  const ref = firestore.doc(`users/${uid}/aiUsage/${dateKey}`);
+  return firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const data = snapshot.exists ? snapshot.data() : {};
+    const currentForms = Number(data.formsCreated || data.count || 0);
+
+    if (currentForms + acceptedForms > DAILY_AI_LIMIT) {
+      throw new HttpsError("resource-exhausted", "Daily AI limit reached.");
+    }
+
+    const now = timestamp.now();
     transaction.set(ref, {
-      count: fieldValue.increment(1),
+      count: fieldValue.increment(acceptedForms),
+      promptsSent: fieldValue.increment(1),
+      formsCreated: fieldValue.increment(acceptedForms),
+      totalAiUsageToday: fieldValue.increment(acceptedForms),
       lastRequestAt: now,
       updatedAt: now,
     }, {merge: true});
 
-    return usagePayload(count + 1, now);
+    return usagePayload({
+      promptsSent: Number(data.promptsSent || 0) + 1,
+      formsCreated: currentForms + acceptedForms,
+    }, now);
   });
 }
 
@@ -374,11 +469,13 @@ exports.parseTransaction = onCall({
   }
 
   const parsedRequest = validateRequest(request.data);
-  const usage = await acceptAiUsage(request);
+  await checkAiUsage(request);
 
   try {
+    const parsed = await parseWithGroq(parsedRequest);
+    const usage = await recordAiUsage(request, parsed.actions?.length || 1);
     return {
-      ...(await parseWithGroq(parsedRequest)),
+      ...parsed,
       usage,
     };
   } catch (error) {
