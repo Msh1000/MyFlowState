@@ -1098,19 +1098,19 @@ function Shell({ data, update, tab, setTab, children }) {
 
   return (
     <div
-      className="min-h-screen overflow-x-hidden bg-[#f7f8fb] text-zinc-950 dark:bg-[#05050b] dark:text-zinc-50"
+      className="premium-shell min-h-screen overflow-x-hidden text-zinc-950 dark:text-zinc-50"
       style={{ ...getPaletteVars(data.settings.palette, isDark), touchAction: "pan-y" }}
       onTouchStart={startSwipe}
       onTouchEnd={endSwipe}
     >
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-white/10 bg-[#050512] px-3 py-5 text-white shadow-[20px_0_70px_rgba(0,0,0,0.35)] lg:flex">
-        <div className="mb-8 flex items-center gap-2 px-2">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--accent-strong)] text-white">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-white/10 bg-[#070814]/95 px-4 py-5 text-white shadow-[20px_0_70px_rgba(0,0,0,0.35)] backdrop-blur-2xl lg:flex">
+        <div className="mb-8 flex items-center gap-3 px-2">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[var(--accent-strong)] text-white shadow-[0_16px_36px_rgba(0,0,0,0.26)]">
             <Wallet size={17} />
           </div>
           <div>
-            <p className="text-sm font-black tracking-tight">MyFlowState</p>
-            <p className="text-[10px] font-semibold text-zinc-500">Budget clarity</p>
+            <p className="text-base font-black tracking-tight">MyFlowState</p>
+            <p className="text-[11px] font-semibold text-zinc-400">Budget clarity</p>
           </div>
         </div>
         <div className="space-y-1">
@@ -1120,25 +1120,26 @@ function Shell({ data, update, tab, setTab, children }) {
               type="button"
               onClick={() => setTab(name)}
               className={cx(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-xs font-bold transition",
+                "relative flex w-full items-center gap-3 overflow-hidden rounded-2xl px-3 py-3.5 text-left text-sm font-bold transition",
                 tab === name
-                  ? "bg-[var(--accent-strong)] text-white shadow-[0_10px_28px_rgba(124,58,237,0.28)]"
+                  ? "bg-white/10 text-white shadow-[0_10px_28px_rgba(0,0,0,0.18)]"
                   : "text-zinc-400 hover:bg-white/5 hover:text-white",
               )}
             >
+              {tab === name && <motion.span layoutId="desktop-nav-active" className="absolute inset-y-2 left-1 w-1 rounded-full bg-[var(--accent)]" />}
               <Icon size={16} />
               {name}
             </button>
           ))}
         </div>
         <div className="mt-auto space-y-3">
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-[11px] font-semibold text-zinc-400">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-[11px] font-semibold text-zinc-400">
             <p className="mb-1 text-zinc-500">Current cycle</p>
             {displayRange(getFinancialRange(data.settings).start, getFinancialRange(data.settings).end)}
           </div>
           <button
             type="button"
-            className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-3 text-xs font-bold text-zinc-300"
+            className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-xs font-bold text-zinc-300"
             onClick={toggleTheme}
           >
             <span className="flex items-center gap-2">
@@ -1152,10 +1153,10 @@ function Shell({ data, update, tab, setTab, children }) {
         </div>
       </aside>
 
-      <header className="sticky top-0 z-20 border-b border-[var(--border-color)] bg-[var(--header-background)] backdrop-blur-xl lg:hidden">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 border-b border-[var(--accent)]/10 bg-[var(--accent-soft)]/35 px-3 py-3 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:bg-[var(--accent-strong)]/10 sm:px-6">
+      <header className="sticky top-0 z-20 border-b border-[var(--border-color)] bg-[var(--header-background)]/90 backdrop-blur-2xl lg:hidden">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--accent)]/30 bg-[var(--accent-strong)] text-white shadow-[0_10px_28px_rgba(15,23,42,0.18)]">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent-strong)] text-white shadow-[0_10px_28px_rgba(15,23,42,0.18)]">
               <Wallet size={17} />
             </div>
             <div className="min-w-0">
@@ -1168,7 +1169,7 @@ function Shell({ data, update, tab, setTab, children }) {
           <button
             type="button"
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-            className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border-color)] bg-white text-zinc-800 shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--accent)] dark:bg-zinc-900 dark:text-zinc-100"
+            className="premium-surface grid h-11 w-11 place-items-center rounded-2xl text-zinc-800 transition hover:border-[var(--accent)] hover:text-[var(--accent)] dark:text-zinc-100"
             onClick={toggleTheme}
           >
             {isDark ? <Sun size={18} /> : <Moon size={18} />}
@@ -1176,10 +1177,10 @@ function Shell({ data, update, tab, setTab, children }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl overflow-x-hidden px-3 py-5 pb-28 sm:px-6 lg:ml-56 lg:px-8 lg:py-7">{children}</main>
+      <main className="mx-auto max-w-7xl overflow-x-hidden px-4 py-5 pb-28 sm:px-6 lg:ml-60 lg:px-8 lg:py-7">{children}</main>
 
-      <nav className="fixed bottom-3 left-1/2 z-30 w-[calc(100%-1.5rem)] max-w-3xl -translate-x-1/2 rounded-lg border border-zinc-200 bg-white/92 p-1.5 shadow-[0_20px_70px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/92 lg:hidden">
-        <div className="grid grid-cols-5 gap-1">
+      <nav className="fixed bottom-3 left-1/2 z-30 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-[1.55rem] border border-white/60 bg-white/88 p-1 shadow-[0_18px_58px_rgba(15,23,42,0.2)] backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-950/88 lg:hidden">
+        <div className="grid grid-cols-5 gap-0.5">
           {tabs.map(([name, Icon]) => (
             <button
               key={name}
@@ -1187,14 +1188,16 @@ function Shell({ data, update, tab, setTab, children }) {
               aria-label={name}
               onClick={() => setTab(name)}
               className={cx(
-                "rounded-md px-2 py-2.5 text-[11px] font-semibold transition sm:text-xs",
+                "relative grid min-h-12 place-items-center overflow-hidden rounded-[1.25rem] px-1 py-1.5 text-[10px] font-bold transition sm:text-xs",
                 tab === name
-                  ? "bg-[var(--accent-strong)] text-white shadow-sm"
+                  ? "text-white"
                   : "text-zinc-500 hover:bg-[var(--accent-soft)] hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white",
               )}
             >
-              <Icon className="mx-auto sm:mb-1" size={18} />
-              <span className="hidden sm:inline">{name}</span>
+              {tab === name && <motion.span layoutId="bottom-nav-active" className="absolute inset-0 rounded-[1.25rem] bg-[var(--accent-strong)] shadow-[0_12px_34px_color-mix(in_srgb,var(--accent)_34%,transparent)]" />}
+              <span className="relative z-10 grid justify-items-center">
+                <Icon size={20} />
+              </span>
             </button>
           ))}
         </div>
@@ -1347,26 +1350,27 @@ function Dashboard({ data, update, syncUser }) {
       )}
       </AnimatePresence>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="flex min-h-[230px] flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
+      <section className="grid gap-4 md:grid-cols-[1.08fr_0.92fr]">
+        <div className="premium-surface relative flex min-h-[260px] overflow-hidden rounded-[2rem] p-5 sm:p-6">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[var(--accent-soft)]/80 to-transparent dark:from-[var(--accent-strong)]/18" />
+          <div className="relative z-10 flex w-full flex-col justify-between">
           <div>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-black text-zinc-600 dark:text-zinc-200">{isHistorical ? "Cycle snapshot" : "Money left"}</p>
-                <p className="mt-1 text-sm font-bold text-zinc-500 dark:text-zinc-400">Income - expenses</p>
+                <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--accent-strong)] dark:text-zinc-300">{isHistorical ? "Cycle snapshot" : "Money left"}</p>
+                <p className="mt-1 text-sm font-bold text-zinc-500 dark:text-zinc-400">Income - expenses, carry-over, savings and investments</p>
               </div>
-              <span className="rounded-md bg-zinc-100 px-2 py-1 text-[10px] font-black text-zinc-500 dark:bg-[#25253a] dark:text-zinc-300">
-                {totals.income ? `${Math.max(0, (totals.moneyLeft / totals.income) * 100).toFixed(0)}% left` : "0% left"}
+              <span className="inline-flex h-10 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-white/40 bg-white/18 text-center text-[10px] font-black leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-white/10">
+                <span className="text-sm">{totals.income ? Math.max(0, (totals.moneyLeft / totals.income) * 100).toFixed(0) : 0}%</span>
+                <span className="mt-0.5 text-[9px] uppercase tracking-[0.08em] text-white/72">left</span>
               </span>
             </div>
-            <p className="mt-3 text-3xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-4xl">{money(totals.moneyLeft, data.settings.currency)}</p>
-            <p className="mt-2 max-w-md text-xs font-semibold leading-relaxed text-zinc-500 dark:text-zinc-400">
-              {isHistorical ? "Read-only dashboard values from this saved financial cycle." : "Includes carry-over, income, expenses, savings deposits, and investment contributions."}
-            </p>
+            <p className="mt-4 text-4xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-5xl">{money(totals.moneyLeft, data.settings.currency)}</p>
             <CompactIncomeExpenseBar hideIncome={data.settings.hideHeroIncome} income={totals.income} expenses={totals.expenses} currency={data.settings.currency} />
           </div>
-          <div className="space-y-4 pt-5">
+          <div className="pt-5">
             {!isHistorical && <MonthProgress start={range.start} end={range.end} />}
+          </div>
           </div>
         </div>
         <NetWorthHero hideNetWorth={data.settings.hideHeroNetWorth} totals={totals} currency={data.settings.currency} />
@@ -1383,8 +1387,8 @@ function Dashboard({ data, update, syncUser }) {
 
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <ChartCard title="Income vs expenses" icon={BarChart3}>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={flowData} margin={{ top: 18, right: 18, left: 18, bottom: 8 }}>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={flowData} margin={{ top: 18, right: 18, left: 12, bottom: 8 }}>
               <XAxis dataKey="name" tickLine={false} axisLine={false} interval={0} tick={{ fontSize: 12, fill: "var(--chart-text)" }} />
               <YAxis width={72} tickLine={false} axisLine={false} tick={{ fill: "var(--chart-text)" }} tickFormatter={(value) => money(value, data.settings.currency)} />
               <Tooltip
@@ -1421,7 +1425,7 @@ function Dashboard({ data, update, syncUser }) {
         >
           {byCategory.length ? (
             <div className="grid gap-4 md:grid-cols-[220px_1fr]">
-              <ResponsiveContainer width="100%" height={230}>
+              <ResponsiveContainer width="100%" height={180}>
                 <RPieChart>
                   <Pie data={byCategory} dataKey="value" nameKey="name" innerRadius={54} outerRadius={86} paddingAngle={3}>
                     {byCategory.map((item) => (
@@ -1499,8 +1503,13 @@ function MonthProgress({ start, end }) {
         <span>Month progress</span>
         <span>{percent.toFixed(0)}%</span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-[#3f3f4a]">
-        <span className="block h-full rounded-full bg-[var(--money-left)]" style={{ width: `${percent}%` }} />
+      <div className="h-3 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-[#3f3f4a]">
+        <motion.span
+          className="block h-full rounded-full bg-[var(--money-left)]"
+          initial={{ width: 0 }}
+          animate={{ width: `${percent}%` }}
+          transition={{ type: "spring", stiffness: 180, damping: 24 }}
+        />
       </div>
     </div>
   );
@@ -1512,7 +1521,7 @@ function CompactIncomeExpenseBar({ income, expenses, currency, hideIncome = fals
   const expensePercent = Math.max(0, Math.min(100, (Number(expenses || 0) / total) * 100));
 
   return (
-    <div className="mt-4 rounded-lg bg-zinc-50 p-3 dark:bg-[#0d0d18]">
+    <div className="premium-inset mt-4 rounded-3xl p-3">
       <div className="mb-2 grid grid-cols-2 gap-3 text-xs">
         <div className="min-w-0">
           <p className="flex items-center gap-2 font-bold text-zinc-500 dark:text-zinc-400">
@@ -1529,7 +1538,7 @@ function CompactIncomeExpenseBar({ income, expenses, currency, hideIncome = fals
           <p className="mt-1 truncate font-black text-zinc-950 dark:text-white">{money(expenses, currency)}</p>
         </div>
       </div>
-      <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-[#303044]">
+      <div className="flex h-3 overflow-hidden rounded-full bg-zinc-200 dark:bg-[#303044]">
         <span className="h-full" style={{ width: `${incomePercent}%`, backgroundColor: "var(--graph-income)" }} />
         <span className="h-full" style={{ width: `${expensePercent}%`, backgroundColor: "var(--graph-expense)" }} />
       </div>
@@ -1544,31 +1553,32 @@ function NetWorthHero({ totals, currency, hideNetWorth = false }) {
   const balanceValue = hideNetWorth ? maskedMoney(currency) : money(totals.moneyLeft, currency);
 
   return (
-    <div className="flex min-h-[190px] flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
+    <div className="premium-surface relative flex min-h-[230px] flex-col justify-between overflow-hidden rounded-[2rem] p-5 sm:p-6">
+      <div className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full bg-[var(--accent)]/14 blur-3xl" />
       <div>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-black text-zinc-600 dark:text-zinc-200">Net worth</p>
-            <p className="mt-2 text-3xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-4xl">{netWorthValue}</p>
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--accent-strong)] dark:text-zinc-300">Net worth</p>
+            <p className="mt-3 text-3xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-4xl">{netWorthValue}</p>
             <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">Saved + invested + balance</p>
           </div>
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)] dark:bg-[#25253a] dark:text-zinc-100">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-inner dark:bg-[#25253a] dark:text-zinc-100">
             <TrendingUp size={18} />
           </div>
         </div>
       </div>
-      <div className="mt-5 grid grid-cols-3 gap-2">
-        <div className="min-w-0 rounded-lg bg-zinc-50 p-2 dark:bg-[#0d0d18]">
+      <div className="mt-5 grid grid-cols-3 gap-2.5">
+        <div className="premium-inset min-w-0 rounded-3xl px-3 py-4">
           <p className="truncate text-[10px] font-black uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Saved</p>
-          <p className="mt-1 truncate text-sm font-black text-zinc-950 dark:text-white">{savedValue}</p>
+          <p className="mt-1 whitespace-nowrap text-[clamp(0.72rem,2.65vw,0.95rem)] font-black text-zinc-950 dark:text-white">{savedValue}</p>
         </div>
-        <div className="min-w-0 rounded-lg bg-zinc-50 p-2 dark:bg-[#0d0d18]">
+        <div className="premium-inset min-w-0 rounded-3xl px-3 py-4">
           <p className="truncate text-[10px] font-black uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Invested</p>
-          <p className="mt-1 truncate text-sm font-black text-zinc-950 dark:text-white">{investedValue}</p>
+          <p className="mt-1 whitespace-nowrap text-[clamp(0.72rem,2.65vw,0.95rem)] font-black text-zinc-950 dark:text-white">{investedValue}</p>
         </div>
-        <div className="min-w-0 rounded-lg bg-zinc-50 p-2 dark:bg-[#0d0d18]">
+        <div className="premium-inset min-w-0 rounded-3xl px-3 py-4">
           <p className="truncate text-[10px] font-black uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">Balance</p>
-          <p className="mt-1 truncate text-sm font-black text-zinc-950 dark:text-white">{balanceValue}</p>
+          <p className="mt-1 whitespace-nowrap text-[clamp(0.72rem,2.65vw,0.95rem)] font-black text-zinc-950 dark:text-white">{balanceValue}</p>
         </div>
       </div>
     </div>
@@ -1580,28 +1590,29 @@ function StatCard({ icon: Icon, label, value, hint, note }) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-lg border border-zinc-200 bg-white p-3 shadow-[0_12px_35px_rgba(24,24,27,0.07)] dark:border-[#202033] dark:bg-[#11111c] sm:p-4"
+      whileTap={{ scale: 0.985 }}
+      className="premium-surface premium-card-hover rounded-3xl p-3 sm:p-4"
     >
-      <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4 sm:gap-3">
-        <div className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] dark:bg-[#21152d] dark:text-[var(--accent)] sm:h-10 sm:w-10">
-          <Icon size={17} />
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="grid h-8 w-8 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)] shadow-inner dark:bg-[#21152d] dark:text-[var(--accent)]">
+          <Icon size={15} />
         </div>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-zinc-400 sm:text-xs">{hint}</span>
+        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px]">{hint}</span>
       </div>
-      <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 sm:text-sm">{label}</p>
-      <p className="mt-1 break-words text-lg font-black tracking-tight text-zinc-950 dark:text-white sm:text-2xl">{value}</p>
-      {note && <p className="mt-3 text-xs font-bold text-[var(--accent-strong)] dark:text-zinc-300">{note}</p>}
+      <p className="text-[11px] font-semibold leading-snug text-zinc-500 dark:text-zinc-400 sm:text-xs">{label}</p>
+      <p className="mt-1 break-words text-base font-black tracking-tight text-zinc-950 dark:text-white sm:text-xl">{value}</p>
+      {note && <p className="mt-2 text-[11px] font-bold text-[var(--accent-strong)] dark:text-zinc-300">{note}</p>}
     </motion.div>
   );
 }
 
 function ChartCard({ title, icon: Icon, children, action }) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-[0_12px_35px_rgba(24,24,27,0.07)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
+    <section className="premium-surface rounded-[2rem] p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Icon className="text-[var(--accent)] dark:text-white" size={18} />
-          <h3 className="font-bold">{title}</h3>
+          <h3 className="font-black tracking-tight">{title}</h3>
         </div>
         {action}
       </div>
@@ -1612,7 +1623,7 @@ function ChartCard({ title, icon: Icon, children, action }) {
 
 function Empty({ text }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm font-medium text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+    <div className="flex min-h-[150px] items-center justify-center rounded-3xl border border-dashed border-zinc-300/80 bg-zinc-50/60 p-6 text-center text-sm font-semibold text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
       {text}
     </div>
   );
@@ -1620,7 +1631,7 @@ function Empty({ text }) {
 
 function FormError({ text }) {
   return (
-    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200">
+    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/40 dark:text-rose-200">
       {text}
     </div>
   );
@@ -3182,8 +3193,10 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
         )}
       </div>
 
-      <div className="space-y-5">
-        <Panel title="All transactions">
+      <div className="space-y-4">
+        <section className="premium-surface min-w-0 rounded-[1.75rem] p-3 sm:p-4">
+          <h2 className="mb-2.5 break-words text-base font-black tracking-tight text-zinc-950 dark:text-white sm:text-lg">All transactions</h2>
+          <div className="space-y-2">
           <Segment
             options={["All", "Income", "Expenses", "Savings", "Investments"]}
             labels={{ Expenses: "Exp.", Investments: "Inv." }}
@@ -3199,13 +3212,13 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
           <div className="relative">
             <Search className="absolute left-3 top-3 text-zinc-400" size={18} />
             <input
-              className="w-full rounded-lg border border-zinc-200 bg-white p-3 pl-10 text-sm text-zinc-950 outline-none transition focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-50"
+              className="w-full rounded-2xl border border-zinc-200 bg-white p-2.5 pl-10 text-sm text-zinc-950 outline-none transition focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-50"
               placeholder="Search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {shownItems.map((item) => (
               <Row
                 key={`${item.group}-${item.id}`}
@@ -3241,7 +3254,8 @@ function Transactions({ data, update, syncUser, setTab, setAiDraft }) {
               <ShowAllButton expanded={showAllTransactions} onClick={() => setShowAllTransactions(!showAllTransactions)} description="View all transactions and activity" />
             )}
           </div>
-        </Panel>
+          </div>
+        </section>
 
         <Panel title="Upcoming Transactions">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3690,7 +3704,7 @@ function Savings({ data, update, aiDraft, clearAiDraft }) {
 
   return (
     <div className="space-y-5">
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard icon={Landmark} label="Savings balance" value={money(totalSavings, data.settings.currency)} hint="all" />
         <StatCard icon={TrendingUp} label="Saved this month" value={money(savedThisMonth, data.settings.currency)} hint="cycle" />
       </section>
@@ -3791,15 +3805,15 @@ function Savings({ data, update, aiDraft, clearAiDraft }) {
             const history = data.savingTransactions.filter((item) => item.savingGoalId === goal.id).sort((a, b) => b.date.localeCompare(a.date));
             const shownHistory = expandedGoals[goal.id] ? history : history.slice(0, SHOW_LIMIT);
             return (
-              <div key={goal.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/70">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div key={goal.id} className="premium-inset rounded-[1.75rem] p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="font-semibold">{goal.name}</p>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       Target {money(goal.goalAmount, data.settings.currency)} by {displayDate(goal.goalDate)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 font-bold">
+                  <div className="flex items-center gap-2 font-bold">
                     <span>{money(goal.currentBalance, data.settings.currency)}</span>
                     <IconButton active={editingGoalId === goal.id} label={editingGoalId === goal.id ? "Cancel edit" : "Edit saving goal"} onClick={() => editGoal(goal)}>
                       <Pencil size={16} />
@@ -3818,7 +3832,7 @@ function Savings({ data, update, aiDraft, clearAiDraft }) {
                     </IconButton>
                   </div>
                 </div>
-                <div className="mt-4">
+                <div className="mt-3">
                   <div className="mb-2 flex justify-between text-xs font-bold text-zinc-500 dark:text-zinc-400">
                     <span>{money(goal.currentBalance, data.settings.currency)} saved</span>
                     <span>{accountProgress.toFixed(0)}%</span>
@@ -3826,12 +3840,12 @@ function Savings({ data, update, aiDraft, clearAiDraft }) {
                   <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                     <span className="block h-full rounded-full bg-[var(--accent)]" style={{ width: `${accountProgress}%` }} />
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400 sm:grid-cols-2">
+                  <div className="mt-2 grid gap-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 sm:grid-cols-2">
                     <span>Remaining {money(remaining, data.settings.currency)}</span>
                     <span>{suggestion === null ? "Goal date passed" : `Suggested ${money(suggestion, data.settings.currency)}/month`}</span>
                   </div>
                 </div>
-                <div className="mt-4 space-y-2">
+                <div className="mt-3 space-y-2">
                   {shownHistory.map((entry, index) => (
                     <Row
                       key={entry.id}
@@ -4068,7 +4082,7 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
   const shownInvestments = showAllInvestments ? data.investments : data.investments.slice(0, 1);
   return (
     <div className="space-y-5">
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard icon={TrendingUp} label="Current value" value={money(totalValue, data.settings.currency)} hint="all" />
         <StatCard icon={Landmark} label="Monthly contributions" value={money(totalMonthly, data.settings.currency)} hint="recurring" />
         <StatCard icon={BarChart3} label="30y projection" value={money(growthData[growthData.length - 1]?.value || 0, data.settings.currency)} hint="estimate" />
@@ -4108,12 +4122,12 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
         )}
 
         <ChartCard title="Investment projection" icon={TrendingUp}>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={growthData} margin={{ top: 14, right: 20, left: 28, bottom: 12 }}>
+          <ResponsiveContainer width="100%" height={210}>
+            <LineChart data={growthData} margin={{ top: 14, right: 18, left: -16, bottom: 12 }}>
               <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--chart-text)" }} />
-              <YAxis width={88} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--chart-text)" }} tickFormatter={(value) => money(value, data.settings.currency)} />
+              <YAxis width={104} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--chart-text)" }} tickFormatter={(value) => money(value, data.settings.currency)} />
               <Tooltip formatter={(value) => money(value, data.settings.currency)} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} />
-              <Line type="monotone" dataKey="value" stroke="var(--graph-income)" strokeWidth={3} dot={{ fill: "var(--graph-income)", r: 4 }} />
+              <Line type="monotone" dataKey="value" stroke="var(--graph-income)" strokeWidth={1.8} dot={{ fill: "var(--graph-income)", r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -4187,8 +4201,8 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
               value: projection(investment.currentBalance, investment.monthlyContribution, investment.annualReturn, year),
             }));
             return (
-              <div key={investment.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/70 sm:p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div key={investment.id} className="premium-inset rounded-[1.75rem] p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="font-semibold">{investment.name}</p>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -4214,8 +4228,8 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
                   </IconButton>
                   </div>
                 </div>
-                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/60">
-                  <ResponsiveContainer width="100%" height={120}>
+                <div className="mt-2 rounded-3xl border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/60">
+                  <ResponsiveContainer width="100%" height={90}>
                     <LineChart data={investmentGrowthData} margin={{ top: 8, right: 10, left: 0, bottom: 0 }}>
                       <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--chart-text)" }} />
                       <Tooltip formatter={(value) => money(value, data.settings.currency)} contentStyle={chartTooltipStyle} labelStyle={chartTooltipLabelStyle} itemStyle={chartTooltipItemStyle} />
@@ -4223,7 +4237,7 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="mt-3 space-y-2">
+                <div className="mt-2 space-y-2">
                   {shownHistory.map((entry, index) => (
                     <Row
                       key={entry.id}
@@ -4640,6 +4654,9 @@ function SettingsScreen({ data, update, setData, syncUser }) {
           value={data.settings.financialStartDate || range.start}
           onChange={updateFinancialStart}
         />
+        {!showAllSettings && (
+          <ShowAllButton expanded={showAllSettings} onClick={() => setShowAllSettings(!showAllSettings)} description="View all settings options" />
+        )}
         {showAllSettings && (
           <>
             <Toggle
@@ -4677,7 +4694,6 @@ function SettingsScreen({ data, update, setData, syncUser }) {
             </div>
           </>
         )}
-        <ShowAllButton expanded={showAllSettings} onClick={() => setShowAllSettings(!showAllSettings)} description="View all settings options" />
       </Panel>
 
       <Panel title="Categories">
@@ -4808,6 +4824,11 @@ function SettingsScreen({ data, update, setData, syncUser }) {
           </>
         )}
       </Panel>
+      {showAllSettings && (
+        <div className="lg:col-span-2">
+          <ShowAllButton expanded={showAllSettings} onClick={() => setShowAllSettings(!showAllSettings)} description="Hide expanded settings options" />
+        </div>
+      )}
     </div>
   );
 }
@@ -4918,8 +4939,8 @@ function EmailSignInModal({
 
 function Panel({ title, children }) {
   return (
-    <section className="min-w-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-[0_12px_35px_rgba(24,24,27,0.07)] dark:border-[#202033] dark:bg-[#11111c] sm:p-5">
-      <h2 className="mb-3 break-words text-base font-black tracking-tight sm:mb-4 sm:text-lg">{title}</h2>
+    <section className="premium-surface min-w-0 rounded-[2rem] p-4 sm:p-5">
+      <h2 className="mb-3 break-words text-base font-black tracking-tight text-zinc-950 dark:text-white sm:mb-4 sm:text-lg">{title}</h2>
       <div className="space-y-2.5 sm:space-y-3">{children}</div>
     </section>
   );
@@ -4936,7 +4957,7 @@ function Input({ label, value, onChange, type = "text", min, disabled = false })
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className={cx(
-          "w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
+          "w-full rounded-2xl border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
           disabled && "cursor-not-allowed opacity-70",
         )}
       />
@@ -4961,7 +4982,7 @@ function AmountInput({ label, value, onChange }) {
         value={value}
         onBlur={commit}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+        className="w-full rounded-2xl border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
       />
     </label>
   );
@@ -5007,13 +5028,13 @@ function DateInput({ label, value, onChange }) {
             const parsed = parseDisplayDate(nextValue);
             if (parsed) onChange(parsed);
           }}
-          className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 pr-12 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+          className="w-full rounded-2xl border border-zinc-200 bg-zinc-50/90 p-3 pr-12 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
         />
         <button
           type="button"
           aria-label={`Choose ${label.toLowerCase()}`}
           onClick={openPicker}
-          className="absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-xl text-zinc-500 transition hover:bg-zinc-100 hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         >
           <CalendarDays size={17} />
         </button>
@@ -5094,13 +5115,13 @@ function FinancialStartInput({ label, value, onChange }) {
             const parsed = parseDisplayDate(nextValue);
             if (parsed) onChange(parsed);
           }}
-          className="w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 pr-12 text-sm font-black text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
+          className="w-full rounded-2xl border border-zinc-200 bg-zinc-50/90 p-3 pr-12 text-sm font-black text-zinc-950 shadow-inner outline-none transition placeholder:text-zinc-400 focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950"
         />
         <button
           type="button"
           aria-label="Choose financial month start date"
           onClick={openPicker}
-          className="absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-xl text-zinc-500 transition hover:bg-zinc-100 hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         >
           <CalendarDays size={17} />
         </button>
@@ -5132,7 +5153,7 @@ function Select({ label, value, options, labels = {}, onChange, disabled = false
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className={cx(
-          "w-full rounded-lg border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
+          "w-full rounded-2xl border border-zinc-200 bg-zinc-50/90 p-3 text-sm font-semibold text-zinc-950 shadow-inner outline-none transition focus:border-[var(--accent)] focus:bg-white focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-50 dark:focus:bg-zinc-950",
           disabled && "cursor-not-allowed opacity-70",
         )}
       >
@@ -5164,7 +5185,7 @@ function VoiceInputButton({ disabled = false, listening = false, onClick, suppor
       disabled={isDisabled}
       onClick={onClick}
       className={cx(
-        "grid h-full min-h-[5.25rem] w-12 place-items-center rounded-lg border text-zinc-700 shadow-sm transition sm:min-h-[5.75rem] sm:w-16",
+        "grid h-full min-h-[5.25rem] w-12 place-items-center rounded-2xl border text-zinc-700 shadow-sm transition sm:min-h-[5.75rem] sm:w-16",
         listening
           ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] ring-4 ring-[var(--accent-soft)]"
           : "border-zinc-200 bg-white hover:border-[var(--accent)] hover:text-[var(--accent-strong)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100",
@@ -5189,7 +5210,7 @@ function Button({ children, onClick, variant = "primary", disabled = false }) {
       onClick={onClick}
       disabled={disabled}
       className={cx(
-        "flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-bold shadow-sm transition sm:px-4 sm:py-3 sm:text-sm",
+        "flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl px-3 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.985] sm:px-4 sm:py-3 sm:text-sm",
         variant === "primary"
           ? "bg-[var(--accent-strong)] text-white hover:opacity-90"
           : "border border-zinc-200 bg-white text-zinc-900 hover:border-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100",
@@ -5237,11 +5258,11 @@ function ActionButton({ icon: Icon, title, description, tone = "green", onClick,
       type="button"
       onClick={onClick}
       className={cx(
-        "group flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:px-4",
+        "group premium-card-hover flex w-full items-center gap-3 rounded-3xl border px-3 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:px-4",
         palette.shell,
       )}
     >
-      <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-full border sm:h-12 sm:w-12", palette.icon)}>
+      <span className={cx("grid h-11 w-11 shrink-0 place-items-center rounded-2xl border sm:h-12 sm:w-12", palette.icon)}>
         <Icon size={20} />
       </span>
       <span className="min-w-0 flex-1">
@@ -5268,7 +5289,7 @@ function ShowAllButton({ expanded, onClick, description = "View all accounts, tr
 
 function Toggle({ checked, label, onChange }) {
   return (
-    <label className="inline-flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 sm:w-auto">
+    <label className="inline-flex w-full min-w-0 items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 sm:w-auto">
       <span className="min-w-0 leading-snug">{label}</span>
       <button
         type="button"
@@ -5299,7 +5320,7 @@ function IconButton({ children, label, onClick, active = false }) {
       onClick={onClick}
       title={label}
       className={cx(
-        "grid h-9 w-9 shrink-0 place-items-center rounded-md transition",
+        "grid h-10 w-10 shrink-0 place-items-center rounded-2xl transition",
         active
           ? "bg-[var(--accent-strong)] text-white shadow-sm"
           : "text-zinc-500 hover:bg-zinc-100 hover:text-rose-600 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-rose-300",
@@ -5312,14 +5333,14 @@ function IconButton({ children, label, onClick, active = false }) {
 
 function Segment({ options, value, setValue, labels = {} }) {
   return (
-    <div className="grid overflow-hidden rounded-lg bg-[var(--accent-soft)] p-1 dark:bg-zinc-900" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+    <div className="grid overflow-hidden rounded-2xl bg-[var(--accent-soft)] p-1 dark:bg-zinc-900" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
       {options.map((option) => (
         <button
           key={option}
           type="button"
           onClick={() => setValue(option)}
           className={cx(
-            "min-w-0 truncate rounded-md px-0.5 py-2 text-[8px] font-bold capitalize transition min-[360px]:text-[9px] sm:px-3 sm:text-xs",
+            "min-w-0 truncate rounded-xl px-0.5 py-2 text-[8px] font-bold capitalize transition min-[360px]:text-[9px] sm:px-3 sm:text-xs",
             value === option
               ? "bg-[var(--accent-strong)] text-white shadow-sm"
               : "text-[var(--accent-strong)] opacity-75 hover:opacity-100 dark:text-zinc-300",
@@ -5336,7 +5357,7 @@ function Row({ left, right, className, compact = false }) {
   return (
     <div
       className={cx(
-        "flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/70 sm:flex-row sm:items-center sm:justify-between",
+        "premium-inset flex flex-col rounded-2xl sm:flex-row sm:items-center sm:justify-between",
         compact ? "gap-2 p-3" : "gap-3 p-3 sm:p-4",
         className,
       )}
@@ -5349,7 +5370,7 @@ function Row({ left, right, className, compact = false }) {
 
 function CompactUpcomingRow({ item, currency, onToggleRecurring, onEditRecurring, recurringEditing = false, onDeleteRecurring, onEditPending, pendingEditing = false, onDeletePending }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/70">
+    <div className="premium-inset rounded-3xl p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-black text-zinc-900 dark:text-white">{item.title || item.type || item.category}</p>
@@ -5415,10 +5436,10 @@ function TinyIconButton({ children, label, onClick, active = false }) {
       title={label}
       onClick={onClick}
       className={cx(
-        "grid h-7 w-7 place-items-center rounded-md border transition",
+        "grid h-9 w-9 place-items-center rounded-2xl border shadow-sm transition active:scale-95",
         active
           ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white"
-          : "border-zinc-200 bg-white text-zinc-500 hover:border-[var(--accent)] hover:text-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300",
+          : "border-zinc-200 bg-white/80 text-zinc-500 hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-300 dark:hover:bg-zinc-900",
       )}
     >
       {children}
