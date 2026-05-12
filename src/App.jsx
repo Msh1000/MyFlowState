@@ -199,9 +199,10 @@ const chartTooltipStyle = {
   borderRadius: 8,
   color: "var(--chart-text)",
   fontWeight: 700,
+  fontSize: "11px",
 };
-const chartTooltipLabelStyle = { color: "var(--chart-text)", fontWeight: 800 };
-const chartTooltipItemStyle = { color: "var(--chart-text)" };
+const chartTooltipLabelStyle = { color: "var(--chart-text)", fontWeight: 800, fontSize: "11px" };
+const chartTooltipItemStyle = { color: "var(--chart-text)", fontSize: "11px" };
 
 function fileTimestamp(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
@@ -1360,12 +1361,12 @@ function Dashboard({ data, update, syncUser }) {
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--accent-strong)] dark:text-zinc-300">{isHistorical ? "Cycle snapshot" : "Money left"}</p>
                 <p className="mt-1 text-sm font-bold text-zinc-500 dark:text-zinc-400">Income - expenses, carry-over, savings and investments</p>
               </div>
-              <span className="inline-flex h-10 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-white/40 bg-white/18 text-center text-[10px] font-black leading-none text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-white/10">
+              <span className="inline-flex h-10 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border border-zinc-900/10 bg-zinc-900/5 text-center text-[10px] font-black leading-none text-zinc-900 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-white/10 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_10px_28px_rgba(0,0,0,0.18)]">
                 <span className="text-sm">{totals.income ? Math.max(0, (totals.moneyLeft / totals.income) * 100).toFixed(0) : 0}%</span>
-                <span className="mt-0.5 text-[9px] uppercase tracking-[0.08em] text-white/72">left</span>
+                <span className="mt-0.5 text-[9px] uppercase tracking-[0.08em] text-zinc-900/60 dark:text-white/72">left</span>
               </span>
             </div>
-            <p className="mt-4 text-4xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-5xl">{money(totals.moneyLeft, data.settings.currency)}</p>
+            <p className="mt-4 text-3xl font-black tracking-tight text-zinc-950 dark:text-white sm:text-4xl">{money(totals.moneyLeft, data.settings.currency)}</p>
             <CompactIncomeExpenseBar hideIncome={data.settings.hideHeroIncome} income={totals.income} expenses={totals.expenses} currency={data.settings.currency} />
           </div>
           <div className="pt-5">
@@ -1585,22 +1586,22 @@ function NetWorthHero({ totals, currency, hideNetWorth = false }) {
   );
 }
 
-function StatCard({ icon: Icon, label, value, hint, note }) {
+function StatCard({ icon: Icon, label, value, hint, note, large = false }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       whileTap={{ scale: 0.985 }}
-      className="premium-surface premium-card-hover rounded-3xl p-3 sm:p-4"
+      className={cx("premium-surface premium-card-hover rounded-3xl", large ? "p-4 sm:p-6" : "p-3 sm:p-4")}
     >
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="grid h-8 w-8 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)] shadow-inner dark:bg-[#21152d] dark:text-[var(--accent)]">
-          <Icon size={15} />
+        <div className={cx("grid place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)] shadow-inner dark:bg-[#21152d] dark:text-[var(--accent)]", large ? "h-10 w-10" : "h-8 w-8")}>
+          <Icon size={large ? 18 : 15} />
         </div>
-        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-400 sm:text-[10px]">{hint}</span>
+        <span className={cx("font-semibold uppercase tracking-[0.08em] text-zinc-400", large ? "text-[10px] sm:text-xs" : "text-[9px] sm:text-[10px]")}>{hint}</span>
       </div>
-      <p className="text-[11px] font-semibold leading-snug text-zinc-500 dark:text-zinc-400 sm:text-xs">{label}</p>
-      <p className="mt-1 break-words text-base font-black tracking-tight text-zinc-950 dark:text-white sm:text-xl">{value}</p>
+      <p className={cx("font-semibold leading-snug text-zinc-500 dark:text-zinc-400", large ? "text-xs sm:text-sm" : "text-[11px] sm:text-xs")}>{label}</p>
+      <p className={cx("mt-1 break-words font-black tracking-tight text-zinc-950 dark:text-white", large ? "text-xl sm:text-3xl" : "text-base sm:text-xl")}>{value}</p>
       {note && <p className="mt-2 text-[11px] font-bold text-[var(--accent-strong)] dark:text-zinc-300">{note}</p>}
     </motion.div>
   );
@@ -1909,6 +1910,13 @@ function useAiVoiceInput({ value, onChange, onStatus }) {
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
+    const timeoutId = setTimeout(() => {
+      if (recognitionRef.current) {
+        stopListening();
+        onStatus("Voice input timed out (35s).");
+      }
+    }, 35000);
+
     recognition.onstart = () => {
       setListening(true);
       onStatus("Listening...");
@@ -1922,11 +1930,13 @@ function useAiVoiceInput({ value, onChange, onStatus }) {
       onStatus(nextText.length >= AI_PROMPT_LIMIT ? `Voice text added and trimmed to ${AI_PROMPT_LIMIT} characters.` : "Voice text added. Review it, then press Add with AI.");
     };
     recognition.onerror = (event) => {
+      clearTimeout(timeoutId);
       setListening(false);
       recognitionRef.current = null;
       onStatus(friendlySpeechRecognitionError(event));
     };
     recognition.onend = () => {
+      clearTimeout(timeoutId);
       setListening(false);
       recognitionRef.current = null;
     };
@@ -2264,7 +2274,7 @@ function AiAddPanel({ data, update, syncUser }) {
       <div className="grid gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 sm:grid-cols-[1fr_auto] sm:items-center sm:p-2.5 sm:text-xs">
         <span>{syncUser ? `Signed in as ${syncUser.displayName || syncUser.email}` : "Please sign in to use AI transaction parsing."}</span>
         <span className="rounded-md bg-white px-2 py-1 text-xs font-black text-[var(--accent-strong)] dark:bg-zinc-950">
-          {aiUsage.bypass ? "Developer bypass" : `${aiUsage.formsCreated ?? aiUsage.count} forms used / ${aiUsage.remaining} left`}
+          {aiUsage.bypass ? "Developer bypass" : `${aiUsage.formsCreated ?? aiUsage.count} used / ${aiUsage.remaining} left`}
         </span>
       </div>
       <label className="block">
@@ -3705,8 +3715,8 @@ function Savings({ data, update, aiDraft, clearAiDraft }) {
   return (
     <div className="space-y-5">
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={Landmark} label="Savings balance" value={money(totalSavings, data.settings.currency)} hint="all" />
-        <StatCard icon={TrendingUp} label="Saved this month" value={money(savedThisMonth, data.settings.currency)} hint="cycle" />
+        <StatCard icon={Landmark} label="Savings balance" value={money(totalSavings, data.settings.currency)} hint="all" large />
+        <StatCard icon={TrendingUp} label="Saved this month" value={money(savedThisMonth, data.settings.currency)} hint="cycle" large />
       </section>
 
       <ActionButton
@@ -4083,8 +4093,8 @@ function Investments({ data, update, aiDraft, clearAiDraft }) {
   return (
     <div className="space-y-5">
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={TrendingUp} label="Current value" value={money(totalValue, data.settings.currency)} hint="all" />
-        <StatCard icon={Landmark} label="Monthly contributions" value={money(totalMonthly, data.settings.currency)} hint="recurring" />
+        <StatCard icon={TrendingUp} label="Current value" value={money(totalValue, data.settings.currency)} hint="all" large />
+        <StatCard icon={Landmark} label="Monthly contributions" value={money(totalMonthly, data.settings.currency)} hint="recurring" large />
         <StatCard icon={BarChart3} label="30y projection" value={money(growthData[growthData.length - 1]?.value || 0, data.settings.currency)} hint="estimate" />
       </section>
 
@@ -4654,9 +4664,6 @@ function SettingsScreen({ data, update, setData, syncUser }) {
           value={data.settings.financialStartDate || range.start}
           onChange={updateFinancialStart}
         />
-        {!showAllSettings && (
-          <ShowAllButton expanded={showAllSettings} onClick={() => setShowAllSettings(!showAllSettings)} description="View all settings options" />
-        )}
         {showAllSettings && (
           <>
             <Toggle
@@ -4694,6 +4701,7 @@ function SettingsScreen({ data, update, setData, syncUser }) {
             </div>
           </>
         )}
+        <ShowAllButton expanded={showAllSettings} onClick={() => setShowAllSettings(!showAllSettings)} description="View all settings options" />
       </Panel>
 
       <Panel title="Categories">
@@ -4752,7 +4760,6 @@ function SettingsScreen({ data, update, setData, syncUser }) {
             <Button onClick={saveToCloud} disabled={syncBusy}>
               <Upload size={16} /> Save to Cloud
             </Button>
-            <ShowAllButton expanded={showAllCloudSync} onClick={() => setShowAllCloudSync(!showAllCloudSync)} description="Load, logout, and sync details" />
             {showAllCloudSync && (
               <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                 <Button onClick={loadFromCloud} disabled={syncBusy} variant="secondary">
@@ -4763,6 +4770,7 @@ function SettingsScreen({ data, update, setData, syncUser }) {
                 </Button>
               </div>
             )}
+            <ShowAllButton expanded={showAllCloudSync} onClick={() => setShowAllCloudSync(!showAllCloudSync)} description="Load, logout, and sync details" />
           </>
         )}
         {syncStatus && (!syncUser || showAllCloudSync) && <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">{syncStatus}</p>}
@@ -4795,7 +4803,6 @@ function SettingsScreen({ data, update, setData, syncUser }) {
         <Button onClick={exportJson} variant="secondary">
           <Download size={16} /> Backup
         </Button>
-        <ShowAllButton expanded={showAllBackup} onClick={() => setShowAllBackup(!showAllBackup)} description="Copy, export, restore, and reset" />
         {showAllBackup && (
           <>
             <Button onClick={copyAndShareJson} variant="secondary">
@@ -4823,6 +4830,7 @@ function SettingsScreen({ data, update, setData, syncUser }) {
             </button>
           </>
         )}
+        <ShowAllButton expanded={showAllBackup} onClick={() => setShowAllBackup(!showAllBackup)} description="Copy, export, restore, and reset" />
       </Panel>
       {showAllSettings && (
         <div className="lg:col-span-2">
